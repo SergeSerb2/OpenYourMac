@@ -189,7 +189,7 @@ window before the command runs.
 - [ ] In this isolated session only, test a known URL action and an unknown route,
   each lifecycle URL, CLI commands, and an installed Raycast script. URL delivery
   alone is not success: observe the resulting app or window state.
-- [ ] Check login registration, first launch from a downloaded ZIP, Accessibility
+- [ ] Check login registration, first launch from a downloaded DMG, Accessibility
   repair after a rebuild, and the [uninstall steps](../README.md#uninstall).
   Check updates against an actual release when one exists.
 

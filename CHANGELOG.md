@@ -6,7 +6,7 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-10-21
 
 ### Added
 
