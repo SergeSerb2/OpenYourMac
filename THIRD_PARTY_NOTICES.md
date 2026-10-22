@@ -70,7 +70,7 @@ MIT is selected where available; Unicode-3.0 remains an additional condition. Al
 | bevy_time 0.19.0 | MIT OR Apache-2.0 | MIT | [text](#text-508a77d2e7b51d98) |
 | bevy_transform 0.19.0 | MIT OR Apache-2.0 | MIT | [text](#text-508a77d2e7b51d98) |
 | bevy_utils 0.19.0 | MIT OR Apache-2.0 | MIT | [text](#text-508a77d2e7b51d98) |
-| bitflags 2.13.0 | MIT OR Apache-2.0 | MIT | [text](#text-6485b8ed310d3f03) |
+| bitflags 2.13.2 | MIT OR Apache-2.0 | MIT | [text](#text-6485b8ed310d3f03) |
 | block2 0.6.2 | MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
 | bon 3.9.1 | MIT OR Apache-2.0 | MIT | [text](#text-8f8dbb74f833dc8a) |
 | bon-macros 3.9.1 | MIT OR Apache-2.0 | MIT | [text](#text-8f8dbb74f833dc8a) |
@@ -79,16 +79,16 @@ MIT is selected where available; Unicode-3.0 remains an additional condition. Al
 | bytemuck_derive 1.10.2 | Zlib OR Apache-2.0 OR MIT | MIT | [text](#text-9df9ba60a11af705) |
 | cfg-if 1.0.4 | MIT OR Apache-2.0 | MIT | [text](#text-378f5840b258e277) |
 | chrono 0.4.44 | MIT OR Apache-2.0 | MIT | [text](#text-aa98273035506efc) |
-| clap 4.6.1 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
-| clap_builder 4.6.0 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
-| clap_derive 4.6.1 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
+| clap 4.6.7 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
+| clap_builder 4.6.7 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
+| clap_derive 4.6.7 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
 | clap_lex 1.1.0 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
 | colorchoice 1.0.5 | MIT OR Apache-2.0 | MIT | [text](#text-6efb0476a1cc0850) |
 | concurrent-queue 2.5.0 | Apache-2.0 OR MIT | MIT | [text](#text-23f18e03dc49df91) |
 | const-fnv1a-hash 1.1.0 | MIT | MIT | [text](#text-6597097f2ed0a4e4) |
 | convert_case 0.10.0 | MIT | MIT | [text](#text-e100f7104b0df01d) |
 | core-foundation-sys 0.8.7 | MIT OR Apache-2.0 | MIT | [text](#text-62065228e42caebc) |
-| crossbeam-channel 0.5.15 | MIT OR Apache-2.0 | MIT | [text](#text-5734ed989dfca1f6), [text](#text-dad0e1f7736532e3) |
+| crossbeam-channel 0.5.17 | MIT OR Apache-2.0 | MIT | [text](#text-5734ed989dfca1f6), [text](#text-dad0e1f7736532e3) |
 | crossbeam-queue 0.3.12 | MIT OR Apache-2.0 | MIT | [text](#text-5734ed989dfca1f6) |
 | crossbeam-utils 0.8.21 | MIT OR Apache-2.0 | MIT | [text](#text-5734ed989dfca1f6) |
 | ctrlc 3.5.2 | MIT/Apache-2.0 | MIT | [text](#text-23f18e03dc49df91) |
@@ -127,7 +127,7 @@ MIT is selected where available; Unicode-3.0 remains an additional condition. Al
 | itoa 1.0.18 | MIT OR Apache-2.0 | MIT | [text](#text-23f18e03dc49df91) |
 | launchctl 0.3.2 | MIT | MIT | [text](#text-0eb4b16ab2261077), [text](#text-508a77d2e7b51d98) |
 | lazy_static 1.5.0 | MIT OR Apache-2.0 | MIT | [text](#text-0621878e61f0d0fd) |
-| libc 0.2.186 | MIT OR Apache-2.0 | MIT | [text](#text-123a331b5dbf04c3) |
+| libc 0.2.191 | MIT OR Apache-2.0 | MIT | [text](#text-123a331b5dbf04c3) |
 | libm 0.2.16 | MIT | MIT | [text](#text-6387bd6b87d57af5) |
 | log 0.4.29 | MIT OR Apache-2.0 | MIT | [text](#text-6485b8ed310d3f03) |
 | mach2 0.6.0 | BSD-2-Clause OR MIT OR Apache-2.0 | MIT | [text](#text-3f9f0f7e5a5911a8) |
@@ -143,7 +143,7 @@ MIT is selected where available; Unicode-3.0 remains an additional condition. Al
 | num-traits 0.2.19 | MIT OR Apache-2.0 | MIT | [text](#text-6485b8ed310d3f03) |
 | num_enum 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | MIT | [text](#text-23f18e03dc49df91) |
 | num_enum_derive 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | MIT | [text](#text-23f18e03dc49df91) |
-| objc2 0.6.4 | MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
+| objc2 0.6.5 | MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
 | objc2-app-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
 | objc2-cloud-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
 | objc2-core-data 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | [text](#text-7f976f7e9cb2d87d), [text](#text-508a77d2e7b51d98) |
@@ -221,7 +221,7 @@ MIT is selected where available; Unicode-3.0 remains an additional condition. Al
 - **block2 0.6.2** (manifest authors: Mads Marquart <mads@marquart.dk>): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
 - **dispatch2 0.3.1** (manifest authors: Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
 - **launchctl 0.3.2** (manifest authors: Sylvan Franklin): Neither the published crate nor its upstream revision has a license file or a copyright notice. Preserve the original MIT declaration and author (Sylvan Franklin); the standard MIT permission text follows. No copyright year or upstream notice has been invented.
-- **objc2 0.6.4** (manifest authors: Mads Marquart <mads@marquart.dk>): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
+- **objc2 0.6.5** (manifest authors: Mads Marquart <mads@marquart.dk>): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
 - **objc2-app-kit 0.3.2** (manifest authors: not specified): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
 - **objc2-cloud-kit 0.3.2** (manifest authors: not specified): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
 - **objc2-core-data 0.3.2** (manifest authors: not specified): The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.
@@ -419,7 +419,7 @@ SOFTWARE.
 
 ### Text 123a331b5dbf04c3
 
-- libc 0.2.186: LICENSE-MIT
+- libc 0.2.191: LICENSE-MIT
 
 ```text
 Copyright (c) The Rust Project Developers
@@ -1027,7 +1027,7 @@ DEALINGS IN THE SOFTWARE.
 - disqualified 1.0.0: LICENSE-MIT
 - ident_case 1.0.1: LICENSE
 - launchctl 0.3.2: MIT-terms.txt — Standard terms of the MIT license declared in Cargo.toml.
-- objc2 0.6.4: MIT-terms.txt — Standard MIT terms; upstream declares MIT but supplies no separate permission text.
+- objc2 0.6.5: MIT-terms.txt — Standard MIT terms; upstream declares MIT but supplies no separate permission text.
 - objc2-app-kit 0.3.2: MIT-terms.txt — Standard MIT terms; upstream declares MIT but supplies no separate permission text.
 - objc2-cloud-kit 0.3.2: MIT-terms.txt — Standard MIT terms; upstream declares MIT but supplies no separate permission text.
 - objc2-core-data 0.3.2: MIT-terms.txt — Standard MIT terms; upstream declares MIT but supplies no separate permission text.
@@ -1095,7 +1095,7 @@ SOFTWARE.
 
 ### Text 5734ed989dfca1f6
 
-- crossbeam-channel 0.5.15: LICENSE-MIT
+- crossbeam-channel 0.5.17: LICENSE-MIT
 - crossbeam-queue 0.3.12: LICENSE-MIT
 - crossbeam-utils 0.8.21: LICENSE-MIT
 
@@ -1305,7 +1305,7 @@ Copyright notices are retained in src/* files where relevant.
 
 ### Text 6485b8ed310d3f03
 
-- bitflags 2.13.0: LICENSE-MIT
+- bitflags 2.13.2: LICENSE-MIT
 - log 0.4.29: LICENSE-MIT
 - num-traits 0.2.19: LICENSE-MIT
 - regex 1.13.1: LICENSE-MIT
@@ -1495,9 +1495,9 @@ the following restrictions:
 - anstyle 1.0.14: LICENSE-MIT
 - anstyle-parse 1.0.0: LICENSE-MIT
 - anstyle-query 1.1.5: LICENSE-MIT
-- clap 4.6.1: LICENSE-MIT
-- clap_builder 4.6.0: LICENSE-MIT
-- clap_derive 4.6.1: LICENSE-MIT
+- clap 4.6.7: LICENSE-MIT
+- clap_builder 4.6.7: LICENSE-MIT
+- clap_derive 4.6.7: LICENSE-MIT
 - clap_lex 1.1.0: LICENSE-MIT
 - colorchoice 1.0.5: LICENSE-MIT
 - is_terminal_polyfill 1.70.2: LICENSE-MIT
@@ -1729,7 +1729,7 @@ SOFTWARE.
 
 - block2 0.6.2: objc2-b4167b58-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md
 - dispatch2 0.3.1: objc2-8852b424-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md
-- objc2 0.6.4: objc2-8852b424-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md
+- objc2 0.6.5: objc2-d7d2fa23-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md
 - objc2-app-kit 0.3.2: objc2-7b1abfd7-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md
 - objc2-cloud-kit 0.3.2: objc2-7b1abfd7-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md
 - objc2-core-data 0.3.2: objc2-7b1abfd7-LICENSE.md — https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md
@@ -2594,7 +2594,7 @@ SOFTWARE.
 
 ### Text dad0e1f7736532e3
 
-- crossbeam-channel 0.5.15: LICENSE-THIRD-PARTY (supplemental notices; Rust MIT option selected)
+- crossbeam-channel 0.5.17: LICENSE-THIRD-PARTY (supplemental notices; Rust MIT option selected)
 
 ```text
 ===============================================================================
