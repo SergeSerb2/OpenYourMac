@@ -50,18 +50,22 @@ macOS 13 as its deployment target and builds the engine without Lua.
 scripts/release.sh
 ```
 
-This runs local CI, builds an ad-hoc-signed release bundle, and verifies its ZIP
-after extraction. If CI already passed for this commit, use `--skip-ci`.
+This runs local CI and builds an ad-hoc-signed release bundle. It verifies the
+bundle in the ZIP after extraction and in the DMG after a read-only mount.
+If CI already passed for this commit, use `--skip-ci`.
 The default command creates no tag and publishes nothing. It prints the `gh`
 command that publishing would run.
 
 Files go in `build/release/`:
 
+- `OpenYourMac-<version>-macos-arm64-adhoc.dmg` (or `-notarized.dmg`) and its
+  `.sha256` file.
 - `OpenYourMac-<version>-macos-arm64-adhoc.zip` (or `-notarized.zip`).
 - The ZIP's `.sha256`, `.build-info.txt`, and `.release-notes.md` files.
 
-The ZIP contains `OpenYourMac.app`, both binaries, the CLI, default config,
-Raycast scripts, and license notices. Build information records the commit,
+The DMG contains `OpenYourMac.app` and an `Applications` link for drag
+installation. The ZIP contains the same app. The app holds both binaries, the
+CLI, default config, Raycast scripts, and license notices. Build information records the commit,
 full commit count, target, toolchain and SDK versions, and `engine/Cargo.lock`
 SHA-256. Release builds use the commit count as the app build number. They do
 not claim byte-for-byte reproducibility. Intel and universal releases are not
@@ -87,6 +91,7 @@ Both variables must be set to sign and notarize. If either is unset, the script
 keeps ad-hoc signing. With both set, it signs the engine and app with hardened
 runtime and timestamps, submits to Apple, requires `Accepted`, and staples the
 ticket. It checks the ticket and Gatekeeper before and after ZIP extraction.
+It also signs, notarizes, and staples the DMG, then checks the app inside it.
 A signing or notarization failure stops the release. Credentials stay in the
 local keychain; no repository signing credentials are needed.
 
@@ -106,14 +111,15 @@ on GitHub before publishing it.
 
 ## Download and first launch
 
-Download the ZIP and `.sha256` file from the same GitHub Release. In that folder:
+Download the DMG and its `.sha256` file from the same GitHub Release. In that folder:
 
 ```sh
-shasum -a 256 -c OpenYourMac-1.0.0-macos-arm64-adhoc.zip.sha256
+shasum -a 256 -c OpenYourMac-1.0.0-macos-arm64-adhoc.dmg.sha256
 ```
 
-Use the actual filename. Extract the ZIP, move `OpenYourMac.app` to
-`/Applications`, and launch it. Grant Accessibility access when requested.
+Use the actual filename. Open the DMG, drag `OpenYourMac` to `Applications`,
+and launch it from `/Applications`. The ZIP works the same way after extraction.
+Grant Accessibility access when requested.
 For an ad-hoc build that Gatekeeper blocks, use **System Settings > Privacy &
 Security > Open Anyway** only after you trust the source and verify the checksum.
 Do not disable Gatekeeper globally. See [Apple's first-launch guide](https://support.apple.com/en-us/102445).

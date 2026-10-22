@@ -40,7 +40,7 @@ status = (
 args.output.write_text(
     f"OpenYourMac {args.version} for Apple silicon, macOS 13 or later.\n\n"
     f"{status}\n\n{body}\n\n"
-    "Verify the ZIP with its SHA-256 file before installation. "
+    "Verify the DMG or ZIP with its SHA-256 file before installation. "
     "See the [release guide](https://github.com/SergeSerb2/OpenYourMac/blob/"
     f"v{args.version}/docs/releasing.md) for installation and first-launch steps.\n",
     encoding="utf-8",

@@ -55,12 +55,13 @@ For a safe trial, use a separate macOS account or VM. See
 
 ### Download a release
 
-1. Download the app ZIP and its `.sha256` checksum file from
+1. Download the `.dmg` file and its `.sha256` checksum file from
    [GitHub Releases](https://github.com/SergeSerb2/OpenYourMac/releases).
-   Release builds are for Apple silicon.
-2. In Terminal, run `shasum -a 256 /path/to/downloaded.zip`. Compare the complete
-   result with the hash in the release checksum file. They must match.
-3. Extract the ZIP. Move **OpenYourMac.app** to **/Applications**.
+   Release builds are for Apple silicon. Each release also has a ZIP of the same app.
+2. In Terminal, go to the download folder and check the file with its checksum,
+   for example `shasum -a 256 -c OpenYourMac-1.0.0-macos-arm64-adhoc.dmg.sha256`.
+   It must print `OK`.
+3. Open the DMG. Drag **OpenYourMac** to **Applications**, then eject the disk image.
 4. Open the app from Applications. Ad-hoc-signed releases are not notarized by
    Apple, so macOS can block the first launch. If you trust the release and its
    checksum matches, open **System Settings › Privacy & Security › Open Anyway**,

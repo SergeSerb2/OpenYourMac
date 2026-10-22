@@ -22,6 +22,20 @@ USAGE
 
 fail() { printf 'release: %s\n' "$*" >&2; exit 1; }
 
+notarize() {
+  xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" \
+    --wait --output-format json > "$scratch/notarization.json"
+  python3 - "$scratch/notarization.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    result = json.load(source)
+if result.get("status") != "Accepted":
+    sys.exit("Notarization was not accepted: " + str(result.get("status")))
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-ci) skip_ci=true ;;
@@ -43,7 +57,12 @@ BUILD_NUMBER="$(git rev-list --count HEAD)"
 export BUILD_NUMBER
 export PATH="$HOME/.cargo/bin:$PATH"
 scratch="$(mktemp -d)"
-trap 'rm -rf "$scratch"' EXIT
+mounted=''
+cleanup() {
+  if [[ -n "$mounted" ]]; then hdiutil detach -quiet -force "$mounted" || true; fi
+  rm -rf "$scratch"
+}
+trap cleanup EXIT
 python3 scripts/release-notes.py --version "$version" --signing-kind ad-hoc --output "$scratch/release-notes.md"
 
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail 'Release artifacts require an Apple silicon Mac with Xcode.'
@@ -74,17 +93,7 @@ if [[ "$signing_kind" == notarized ]]; then
   codesign --force --sign "$CODESIGN_IDENTITY" --options runtime --timestamp "$bundle"
   codesign --verify --deep --strict "$bundle"
   ditto -c -k --sequesterRsrc --keepParent "$bundle" "$scratch/submission.zip"
-  xcrun notarytool submit "$scratch/submission.zip" --keychain-profile "$NOTARY_PROFILE" \
-    --wait --output-format json > "$scratch/notarization.json"
-  python3 - "$scratch/notarization.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    result = json.load(source)
-if result.get("status") != "Accepted":
-    sys.exit("Notarization was not accepted: " + str(result.get("status")))
-PY
+  notarize "$scratch/submission.zip"
   xcrun stapler staple "$bundle"
   xcrun stapler validate "$bundle"
   spctl --assess --type execute --verbose=4 "$bundle"
@@ -104,7 +113,35 @@ if [[ "$signing_kind" == notarized ]]; then
   xcrun stapler validate "$scratch/extracted/OpenYourMac.app"
   spctl --assess --type execute --verbose=4 "$scratch/extracted/OpenYourMac.app"
 fi
-(cd build/release && shasum -a 256 "$asset" > "$asset.sha256")
+
+# The disk image holds the app and an Applications link for drag installation.
+dmg_asset="OpenYourMac-$version-macos-arm64-$signing_kind.dmg"
+dmg="$repo_root/build/release/$dmg_asset"
+mkdir "$scratch/dmg-root"
+ditto "$bundle" "$scratch/dmg-root/OpenYourMac.app"
+ln -s /Applications "$scratch/dmg-root/Applications"
+rm -f "$dmg"
+hdiutil create -quiet -volname OpenYourMac -srcfolder "$scratch/dmg-root" -fs HFS+ -format UDZO "$dmg"
+if [[ "$signing_kind" == notarized ]]; then
+  codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$dmg"
+  notarize "$dmg"
+  xcrun stapler staple "$dmg"
+  xcrun stapler validate "$dmg"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+fi
+hdiutil verify -quiet "$dmg"
+mounted="$scratch/mounted"
+hdiutil attach -quiet -nobrowse -noautoopen -readonly -mountpoint "$mounted" "$dmg"
+[[ -L "$mounted/Applications" && "$(readlink "$mounted/Applications")" == /Applications ]] \
+  || fail 'The disk image has no Applications link.'
+scripts/verify-bundle.sh "$mounted/OpenYourMac.app"
+if [[ "$signing_kind" == notarized ]]; then
+  xcrun stapler validate "$mounted/OpenYourMac.app"
+fi
+hdiutil detach -quiet "$mounted"
+mounted=''
+
+(cd build/release && shasum -a 256 "$asset" > "$asset.sha256" && shasum -a 256 "$dmg_asset" > "$dmg_asset.sha256")
 {
   printf 'Commit: %s\nBuild number: %s\nTarget: aarch64-apple-darwin\n' "$commit" "$BUILD_NUMBER"
   (cd engine && rustc --version && cargo --version)
@@ -121,7 +158,7 @@ notes_kind=ad-hoc
 if [[ "$signing_kind" == notarized ]]; then notes_kind=notarized; fi
 python3 scripts/release-notes.py --version "$version" --signing-kind "$notes_kind" --output "$notes"
 
-gh_command=(gh release create "$tag" "$archive" "$archive.sha256" "$archive.build-info.txt" "$notes"
+gh_command=(gh release create "$tag" "$dmg" "$dmg.sha256" "$archive" "$archive.sha256" "$archive.build-info.txt" "$notes"
   --draft --verify-tag --title "OpenYourMac $version" --notes-file "$notes")
 if [[ "$publish" == true ]]; then
   [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail 'Worktree changed during the build; refusing to publish.'
