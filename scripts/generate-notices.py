@@ -96,7 +96,7 @@ def license_texts(package, overrides):
                 raise ValueError("Review changed libm license layout")
             body = before + attribution + after
             label += " (MIT section and all third-party attributions)"
-        if key == "crossbeam-channel@0.5.15" and label == "LICENSE-THIRD-PARTY":
+        if key == "crossbeam-channel@0.5.17" and label == "LICENSE-THIRD-PARTY":
             # The file already includes Rust's MIT option and copyright notice.
             # Its final block repeats only the alternative Apache boilerplate.
             body, separator, alternate = body.partition(
