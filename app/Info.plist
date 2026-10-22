@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.openyourmac.OpenYourMac</string>
+    <key>CFBundleName</key>
+    <string>OpenYourMac</string>
+    <key>CFBundleDisplayName</key>
+    <string>OpenYourMac</string>
+    <key>CFBundleExecutable</key>
+    <string>OpenYourMac</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 OpenYourMac contributors. MIT License.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>com.openyourmac.OpenYourMac.url</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>openyourmac</string>
+            </array>
+        </dict>
+    </array>
+    <key>OYMUpdateRepository</key>
+    <string>SergeSerb2/OpenYourMac</string>
+</dict>
+</plist>

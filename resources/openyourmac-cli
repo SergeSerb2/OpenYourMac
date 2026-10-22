@@ -1,0 +1,59 @@
+#!/bin/bash
+# OpenYourMac commands, also available through ~/.local/bin/openyourmac.
+set -euo pipefail
+
+# Follow both absolute and relative links to find the bundled engine.
+source_path="${BASH_SOURCE[0]}"
+while [[ -L "$source_path" ]]; do
+  source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  link_path="$(readlink "$source_path")"
+  case "$link_path" in
+    /*) source_path="$link_path" ;;
+    *) source_path="$source_dir/$link_path" ;;
+  esac
+done
+source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+
+if [[ $# -eq 0 || ${1:-} == -h || ${1:-} == --help ]]; then
+  cat <<'USAGE'
+Usage: openyourmac <command>
+
+  start | stop | restart | toggle    Start or stop the window manager
+  window focus <west|east|north|south|first|last|1-9>
+  window swap  <west|east|north|south|first|last|1-9>
+  window center | resize | fullwidth | wider | narrower
+  window taller | shorter | equalize
+  window stack | unstack | consume east | expel west | tabbed
+  window manage | nextdisplay
+  window pin <left|right>            Pin or unpin the focused column
+  strip show                        Display the strip map
+
+Install this command from OpenYourMac → Help → Integrations.
+Lifecycle success means URL delivery. Window commands return the engine's status.
+USAGE
+  exit 0
+fi
+
+case "$1" in
+  start|stop|restart|toggle)
+    if [[ $# -eq 2 && ( "$2" == -h || "$2" == --help ) ]]; then
+      printf 'Usage: openyourmac %s\n\nDeliver the %s action to OpenYourMac.\n' "$1" "$1"
+      exit 0
+    fi
+    if [[ $# -ne 1 ]]; then
+      printf 'openyourmac: %s takes no arguments. Use %s --help.\n' "$1" "$1" >&2
+      exit 2
+    fi
+    exec /usr/bin/open -g "openyourmac://$1"
+    ;;
+esac
+
+for engine in "$source_dir/OpenYourMacEngine" "$source_dir/../OpenYourMacEngine"; do
+  if [[ -x "$engine" ]]; then
+    exec "$engine" send-cmd "$@"
+  fi
+done
+
+printf '%s\n' 'openyourmac: OpenYourMacEngine is missing or is not executable.' >&2
+printf '%s\n' 'Reinstall the CLI from OpenYourMac → Help → Integrations.' >&2
+exit 1

@@ -1,0 +1,803 @@
+use accessibility_sys::{
+    AXObserverRef, AXUIElementCreateApplication, AXUIElementCreateSystemWide, AXUIElementRef,
+    AXUIElementSetMessagingTimeout, kAXErrorSuccess,
+};
+use bevy::ecs::component::Component;
+use core::ptr::NonNull;
+use crossbeam_channel::Sender;
+use derive_more::{DerefMut, with_trait::Deref};
+use mockall::automock;
+use objc2_core_foundation::{CFRetained, CFString, kCFRunLoopCommonModes};
+use std::ffi::c_void;
+use std::pin::Pin;
+use std::ptr::null_mut;
+use std::sync::{Arc, LazyLock, RwLock};
+use std::thread;
+use stdext::sync::rw_lock::RwLockExt;
+
+use stdext::function_name;
+use tracing::{debug, error};
+
+use super::skylight::_SLPSGetFrontProcess;
+use super::{ProcessApi, Window, WindowOS, ax_window_id};
+use crate::config::Config;
+use crate::errors::{Error, Result};
+use crate::events::{DestroySource, Event, EventSender};
+use crate::platform::{
+    AXObserverAddNotification, AXObserverCreate, AXObserverRemoveNotification, CFStringRef, ConnID,
+    Pid, ProcessSerialNumber, WinID,
+};
+use crate::util::{AXUIAttributes, AXUIWrapper, MacResult, add_run_loop, remove_run_loop};
+
+/// How long any one accessibility call may wait on the app that owns the
+/// element before giving up. See [`ApplicationOS::new`] for why this is set at
+/// all; the default is six seconds.
+const AX_MESSAGING_TIMEOUT_SEC: f32 = 0.25;
+
+/// Applies [`AX_MESSAGING_TIMEOUT_SEC`] to the process rather than to one
+/// element, and must run before any application is observed.
+///
+/// The call in [`ApplicationOS::new`] binds the element it is given. Per Apple's
+/// `AXUIElement.h` the system-wide element is the one that carries a
+/// process-global default, and an element left at zero "uses the current global
+/// timeout value". Window elements arrive from `AXUIElementCopyAttributeValue`
+/// and are never handed to `AXUIElementSetMessagingTimeout`, so without this
+/// they wait out the six second default instead.
+pub(crate) fn bound_ax_messaging_timeout() -> Result<()> {
+    let system_wide = AXUIWrapper::from_retained(unsafe { AXUIElementCreateSystemWide() })?;
+    unsafe { AXUIElementSetMessagingTimeout(system_wide.as_ptr(), AX_MESSAGING_TIMEOUT_SEC) }
+        .to_result(function_name!())
+}
+
+/// A static `LazyLock` that holds a list of `AXNotification` strings to be observed for application-level events.
+/// These notifications are general events related to an application's lifecycle and state changes,
+/// such as a new window being created, the focused window changing, or a menu being opened/closed.
+pub static AX_NOTIFICATIONS: LazyLock<Vec<&str>> = LazyLock::new(|| {
+    vec![
+        accessibility_sys::kAXCreatedNotification,
+        accessibility_sys::kAXFocusedWindowChangedNotification,
+        accessibility_sys::kAXFocusedUIElementChangedNotification,
+        accessibility_sys::kAXWindowMovedNotification,
+        accessibility_sys::kAXWindowResizedNotification,
+        accessibility_sys::kAXMenuOpenedNotification,
+        accessibility_sys::kAXMenuClosedNotification,
+    ]
+});
+
+/// A static `LazyLock` that holds a list of `AXNotification` strings to be observed for window-specific events.
+/// These notifications are related to individual window lifecycle events,
+/// such as a window being destroyed, miniaturized (minimized), or deminiaturized (restored).
+pub static AX_WINDOW_NOTIFICATIONS: LazyLock<Vec<&str>> = LazyLock::new(|| {
+    vec![
+        accessibility_sys::kAXUIElementDestroyedNotification,
+        accessibility_sys::kAXWindowMiniaturizedNotification,
+        accessibility_sys::kAXWindowDeminiaturizedNotification,
+        // Observed per window, not per application: on the app observer this
+        // notification's element carries no resolvable window id, which left
+        // `WindowOS::title` caching a title it was never told to invalidate.
+        accessibility_sys::kAXTitleChangedNotification,
+    ]
+});
+
+#[automock]
+pub trait ApplicationApi: Send + Sync {
+    /// Returns the process ID of the application.
+    fn pid(&self) -> Pid;
+    /// Returns the process serial number of the application.
+    fn psn(&self) -> ProcessSerialNumber;
+    /// Returns the connection ID of the application.
+    fn connection(&self) -> Option<ConnID>;
+    /// Returns the ID of the currently focused window for this application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if the focused window cannot be determined.
+    fn focused_window_id(&self) -> Result<WinID>;
+    /// Returns the currently focused window for this application, if any.
+    fn focused_window(&self, config: &Config) -> Option<Window>;
+    /// Returns a list of all windows belonging to this application.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The current Paneru configuration, used to evaluate window rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if the window list cannot be retrieved.
+    fn window_list(&self, config: &Config) -> Vec<Window>;
+    /// Returns the IDs of the windows the app currently exposes over
+    /// accessibility.
+    ///
+    /// A background native tab is missing from this list while the window
+    /// server still reports it on screen, which is what tells the two apart.
+    fn ax_window_ids(&self) -> Vec<WinID>;
+    /// Starts observing application-level accessibility notifications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if observers cannot be registered.
+    fn observe(&mut self) -> Result<bool>;
+    /// Starts observing window-specific accessibility notifications for a given window.
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - The `Window` to observe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if observers cannot be registered.
+    fn observe_window(&mut self, window: &Window) -> Result<bool>;
+    /// Stops observing window-specific accessibility notifications for a given window.
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - The `Window` to unobserve.
+    fn unobserve_window(&mut self, window: &Window);
+    /// Checks if the application is currently the frontmost application.
+    fn is_frontmost(&self) -> bool;
+    /// Returns the bundle identifier of the application.
+    fn bundle_id(&self) -> Option<String>;
+    /// Returns the display name of the application.
+    fn name(&self) -> &str;
+}
+
+/// A wrapper struct for `ApplicationApi` trait objects, allowing for dynamic dispatch.
+/// It implements `Deref` and `DerefMut` to easily access the underlying `ApplicationApi` methods.
+#[derive(Component, Deref, DerefMut)]
+pub struct Application(Box<dyn ApplicationApi>);
+
+impl std::fmt::Debug for Application {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "app (pid {})", self.pid())
+    }
+}
+
+impl std::fmt::Display for Application {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "app (pid {})", self.pid())
+    }
+}
+
+impl Application {
+    /// Creates a new `Application` instance from a boxed `ApplicationApi` trait object.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - A `Box<dyn ApplicationApi>` representing the application implementation.
+    pub fn new(app: Box<dyn ApplicationApi>) -> Self {
+        Application(app)
+    }
+}
+
+/// `ApplicationOS` is a concrete implementation of the `ApplicationApi` trait for macOS.
+/// It manages an application's accessibility UI element, process information, and event observation.
+pub struct ApplicationOS {
+    element: CFRetained<AXUIWrapper>,
+    psn: ProcessSerialNumber,
+    pid: Pid,
+    connection: Option<ConnID>,
+    handler: AxObserverHandler,
+    bundle_id: Option<String>,
+    name: String,
+}
+
+impl Drop for ApplicationOS {
+    /// Cleans up the `AXObserver` by removing all registered notifications when the `Application` is dropped.
+    fn drop(&mut self) {
+        self.handler
+            .remove_observer(&ObserverType::Application, &self.element, &AX_NOTIFICATIONS);
+    }
+}
+
+impl std::fmt::Display for ApplicationOS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "app '{}' (pid {})", self.name, self.pid)
+    }
+}
+
+impl ApplicationOS {
+    /// Creates a new `Application` instance for a given process.
+    /// It obtains the Accessibility UI element for the application and its connection ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `connection` - The main connection ID for the `SkyLight` API.
+    /// * `process` - A reference to the `Process` associated with this application.
+    /// * `events` - An `EventSender` to send events from the `AXObserver`.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Self)` if the `Application` is created successfully, otherwise `Err(Error)`.
+    pub fn new(
+        connection: Option<ConnID>,
+        process: &dyn ProcessApi,
+        events: &EventSender,
+        resolver: Sender<PendingNotification>,
+    ) -> Result<Self> {
+        let refer = unsafe {
+            let ptr = AXUIElementCreateApplication(process.pid());
+            // Without this, a synchronous AX call to an app that stops servicing
+            // its accessibility port (beachballing, paused in a debugger) blocks
+            // the main thread for the default six-second timeout, per call. This
+            // binds the application element; `bound_ax_messaging_timeout` covers
+            // the window elements copied out of it. A call that trips either one
+            // fails with `kAXErrorCannotComplete`, treated like any other AX error.
+            AXUIElementSetMessagingTimeout(ptr, AX_MESSAGING_TIMEOUT_SEC);
+            AXUIWrapper::from_retained(ptr)?
+        };
+        let bundle_id = process
+            .application()
+            .as_ref()
+            .and_then(|app| app.bundleIdentifier())
+            .map(|id| id.to_string());
+        Ok(Self {
+            element: refer,
+            psn: process.psn(),
+            pid: process.pid(),
+            connection,
+            handler: AxObserverHandler::new(process.pid(), events.clone(), resolver)?,
+            bundle_id,
+            name: process.name().to_string(),
+        })
+    }
+}
+
+impl ApplicationApi for ApplicationOS {
+    /// Retrieves the process ID (Pid) of the application.
+    ///
+    /// # Returns
+    ///
+    /// The process ID.
+    fn pid(&self) -> Pid {
+        self.pid
+    }
+
+    /// Retrieves the `ProcessSerialNumber` of the application.
+    ///
+    /// # Returns
+    ///
+    /// The process serial number.
+    fn psn(&self) -> ProcessSerialNumber {
+        self.psn
+    }
+
+    /// Retrieves the connection ID (`ConnID`) of the application.
+    ///
+    /// # Returns
+    ///
+    /// The connection ID.
+    fn connection(&self) -> Option<ConnID> {
+        self.connection
+    }
+
+    /// Retrieves the focused window ID of the application.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(WinID)` with the focused window ID if successful, otherwise `Err(Error)`.
+    fn focused_window_id(&self) -> Result<WinID> {
+        self.element.focused_window_id()
+    }
+
+    fn focused_window(&self, config: &Config) -> Option<Window> {
+        let bundle_id = self.bundle_id.as_deref();
+        self.element
+            .focused_window_element()
+            .ok()
+            .and_then(|element| {
+                WindowOS::new_with_config(&element, config, bundle_id)
+                    .ok()
+                    .map(|window| Window::new(Box::new(window)))
+            })
+    }
+
+    /// Retrieves a list of all windows associated with the application.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Vec<Result<Window>>)` containing the list of window objects if successful, otherwise `Err(Error)`.
+    fn window_list(&self, config: &Config) -> Vec<Window> {
+        let bundle_id = self.bundle_id.as_deref();
+        self.element
+            .windows()
+            .map(|windows| {
+                windows
+                    .into_iter()
+                    .flat_map(|element| {
+                        WindowOS::new_with_config(&element, config, bundle_id)
+                            .map(|window| Window::new(Box::new(window)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn ax_window_ids(&self) -> Vec<WinID> {
+        self.element
+            .windows()
+            .map(|windows| {
+                windows
+                    .iter()
+                    .filter_map(|element| ax_window_id(element.as_ptr()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Registers observers for general application-level accessibility notifications (e.g., `kAXCreatedNotification`).
+    ///
+    /// # Returns
+    ///
+    /// `Ok(bool)` where `true` means all observers were successfully registered and `retry` list is empty, otherwise `Err(Error)`.
+    fn observe(&mut self) -> Result<bool> {
+        self.handler
+            .add_observer(&self.element, &AX_NOTIFICATIONS, ObserverType::Application)
+            .map(|retry| retry.is_empty())
+    }
+
+    /// Registers observers for specific window-level accessibility notifications (e.g., `kAXUIElementDestroyedNotification`).
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - A reference to the `Window` object to observe.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(bool)` where `true` means all observers were successfully registered and `retry` list is empty, otherwise `Err(Error)`.
+    fn observe_window(&mut self, window: &Window) -> Result<bool> {
+        if let Some(element) = window.element() {
+            self.handler
+                .add_observer(
+                    &element,
+                    &AX_WINDOW_NOTIFICATIONS,
+                    ObserverType::Window(window.id()),
+                )
+                .map(|retry| retry.is_empty())
+        } else {
+            Err(Error::InvalidWindow)
+        }
+    }
+
+    /// Unregisters observers for a specific window's accessibility notifications.
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - A reference to the `Window` object to unobserve.
+    fn unobserve_window(&mut self, window: &Window) {
+        if let Some(element) = window.element() {
+            self.handler.remove_observer(
+                &ObserverType::Window(window.id()),
+                &element,
+                &AX_WINDOW_NOTIFICATIONS,
+            );
+        }
+    }
+
+    /// Checks if the application is currently the frontmost application.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the application is frontmost, `false` otherwise.
+    fn is_frontmost(&self) -> bool {
+        let mut psn = ProcessSerialNumber::default();
+        unsafe { _SLPSGetFrontProcess(&mut psn) }
+            .to_result(function_name!())
+            .is_ok()
+            && self.psn == psn
+    }
+
+    /// Returns the bundle identifier of the application.
+    ///
+    /// # Returns
+    ///
+    /// An `Option<&str>` containing the bundle ID if available, otherwise `None`.
+    fn bundle_id(&self) -> Option<String> {
+        self.bundle_id.clone()
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// An enum representing the type of observer being used.
+/// `Application` refers to an observer for application-level events.
+/// `Window(WinID)` refers to an observer for a specific window, identified by its `WinID`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ObserverType {
+    Application,
+    Window(WinID),
+}
+
+/// `ObserverContext` holds the `EventSender` and the `ObserverType`,
+/// which are used within the `AXObserver` callback to dispatch accessibility events.
+/// An application notification whose window is not named yet.
+#[derive(Clone, Copy, Debug)]
+enum WindowNotification {
+    Focused,
+    Moved,
+    Resized,
+    MenuOpened,
+    MenuClosed,
+}
+
+impl WindowNotification {
+    fn from_name(notification: &str) -> Option<Self> {
+        match notification {
+            accessibility_sys::kAXFocusedWindowChangedNotification
+            | accessibility_sys::kAXFocusedUIElementChangedNotification => Some(Self::Focused),
+            accessibility_sys::kAXWindowMovedNotification => Some(Self::Moved),
+            accessibility_sys::kAXWindowResizedNotification => Some(Self::Resized),
+            accessibility_sys::kAXMenuOpenedNotification => Some(Self::MenuOpened),
+            accessibility_sys::kAXMenuClosedNotification => Some(Self::MenuClosed),
+            _ => None,
+        }
+    }
+
+    fn into_event(self, window_id: WinID) -> Event {
+        match self {
+            Self::Focused => Event::WindowFocused { window_id },
+            Self::Moved => Event::WindowMoved { window_id },
+            Self::Resized => Event::WindowResized { window_id },
+            Self::MenuOpened => Event::MenuOpened { window_id },
+            Self::MenuClosed => Event::MenuClosed { window_id },
+        }
+    }
+}
+
+pub(crate) struct PendingNotification {
+    kind: WindowNotification,
+    element: CFRetained<AXUIWrapper>,
+}
+
+/// Names the window behind each pending notification, off the run loop and in
+/// arrival order.
+///
+/// `_AXUIElementGetWindow` blocks on a round trip into the app that sent the
+/// notification. Called straight from the observer callback it holds the run
+/// loop, and the `CGEventTap` callback shares that run loop, so a slow app turns
+/// every lookup into keystroke latency.
+///
+/// One thread rather than a task pool: two focus notifications resolving out of
+/// order would leave paneru chasing the wrong window.
+#[derive(Clone)]
+pub(crate) struct WindowResolver {
+    sender: Sender<PendingNotification>,
+}
+
+impl WindowResolver {
+    pub(crate) fn new(events: EventSender) -> Self {
+        let (tx, rx) = crossbeam_channel::unbounded::<PendingNotification>();
+        thread::Builder::new()
+            .name("ax-window-resolver".into())
+            .spawn(move || {
+                for pending in rx {
+                    match ax_window_id(pending.element.as_ptr()) {
+                        Ok(window_id) => {
+                            _ = events.send(pending.kind.into_event(window_id));
+                        }
+                        Err(err) => debug!("naming window for {:?}: {err}", pending.kind),
+                    }
+                }
+            })
+            .expect("spawning the AX window resolver should succeed");
+        Self { sender: tx }
+    }
+
+    pub(crate) fn sender(&self) -> Sender<PendingNotification> {
+        self.sender.clone()
+    }
+}
+
+struct ObserverContext {
+    events: EventSender,
+    resolver: Sender<PendingNotification>,
+    which: ObserverType,
+}
+
+impl ObserverContext {
+    /// Notifies the event sender about an accessibility event.
+    /// It dispatches the event to either `notify_app` or `notify_window` based on the `ObserverType`.
+    ///
+    /// # Arguments
+    ///
+    /// * `notification` - The name of the accessibility notification as a `&str`.
+    /// * `element` - The `AXUIElementRef` associated with the notification.
+    fn notify(&self, notification: &str, element: AXUIElementRef) {
+        match self.which {
+            ObserverType::Application => self.notify_app(notification, element),
+            ObserverType::Window(id) => self.notify_window(notification, id),
+        }
+    }
+
+    /// Notifies the event sender about an application-level accessibility event.
+    /// It translates the notification string and element into a corresponding `Event`.
+    ///
+    /// # Arguments
+    ///
+    /// * `notification` - The name of the accessibility notification as a `&str`.
+    /// * `element` - The `AXUIElementRef` associated with the notification.
+    fn notify_app(&self, notification: &str, element: AXUIElementRef) {
+        // Handled before the window-id lookup below: a creation notification is
+        // the one case whose element is not yet a window paneru knows about.
+        if notification == accessibility_sys::kAXCreatedNotification {
+            let Ok(element) = AXUIWrapper::retain(element).inspect_err(|err| {
+                error!("invalid element {element:?}: {err}");
+            }) else {
+                return;
+            };
+            _ = self.events.send(Event::WindowCreated { element });
+            return;
+        }
+
+        let Some(kind) = WindowNotification::from_name(notification) else {
+            error!("unhandled application notification: {notification:?}");
+            return;
+        };
+        let Ok(element) = AXUIWrapper::retain(element).inspect_err(|err| {
+            error!("invalid element {element:?}: {err}");
+        }) else {
+            return;
+        };
+
+        _ = self.resolver.send(PendingNotification { kind, element });
+    }
+
+    /// Notifies the event sender about a window-level accessibility event.
+    /// It translates the notification string and window ID into a corresponding `Event`.
+    ///
+    /// # Arguments
+    ///
+    /// * `notification` - The name of the accessibility notification as a `&str`.
+    /// * `window_id` - The ID of the window associated with the notification.
+    fn notify_window(&self, notification: &str, window_id: WinID) {
+        let event = match notification {
+            accessibility_sys::kAXWindowMiniaturizedNotification => {
+                Event::WindowMinimized { window_id }
+            }
+            accessibility_sys::kAXWindowDeminiaturizedNotification => {
+                Event::WindowDeminimized { window_id }
+            }
+            accessibility_sys::kAXUIElementDestroyedNotification => Event::WindowDestroyed {
+                window_id,
+                source: DestroySource::Accessibility,
+            },
+            accessibility_sys::kAXTitleChangedNotification => {
+                Event::WindowTitleChanged { window_id }
+            }
+
+            _ => {
+                error!("unhandled window notification: {notification:?}");
+                return;
+            }
+        };
+        _ = self.events.send(event);
+    }
+}
+
+/// `AxObserverHandler` manages the lifecycle of an `AXObserver`,
+/// including its creation, registration of notifications, and removal from the run loop.
+struct AxObserverHandler {
+    observer: CFRetained<AXUIWrapper>,
+    events: EventSender,
+    resolver: Sender<PendingNotification>,
+    contexts: Arc<RwLock<Vec<Pin<Box<ObserverContext>>>>>,
+}
+
+impl Drop for AxObserverHandler {
+    /// Invalidates the run loop source associated with the `AXObserver` when the `AxObserverHandler` is dropped.
+    fn drop(&mut self) {
+        remove_run_loop(&self.observer);
+    }
+}
+
+impl AxObserverHandler {
+    /// Creates a new `AxObserverHandler` instance for a given process ID.
+    /// It creates an `AXObserver` and adds its run loop source to the main run loop.
+    ///
+    /// # Arguments
+    ///
+    /// * `pid` - The process ID to create the observer for.
+    /// * `events` - An `EventSender` to send events generated by the observer.
+    /// * `resolver` - A channel sender to offload window identification.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Self)` if the handler is created successfully, otherwise `Err(Error)`.
+    fn new(pid: Pid, events: EventSender, resolver: Sender<PendingNotification>) -> Result<Self> {
+        let observer = unsafe {
+            let mut observer_ref: AXObserverRef = null_mut();
+            if kAXErrorSuccess == AXObserverCreate(pid, Self::callback, &mut observer_ref) {
+                AXUIWrapper::from_retained(observer_ref)?
+            } else {
+                return Err(Error::PermissionDenied(format!(
+                    "{}: error creating observer.",
+                    function_name!()
+                )));
+            }
+        };
+
+        unsafe { add_run_loop(&observer, kCFRunLoopCommonModes)? };
+        Ok(Self {
+            observer,
+            events,
+            resolver,
+            contexts: Arc::new(RwLock::new(Vec::new())),
+        })
+    }
+
+    /// Adds accessibility notifications to be observed for a given UI element.
+    ///
+    /// # Arguments
+    ///
+    /// * `element` - The `&AXUIWrapper` to observe.
+    /// * `notifications` - A slice of static strings representing the notification names to add.
+    /// * `which` - The type of observer context (application-specific or window-specific).
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Vec<&str>)` containing a list of notifications that could not be registered (retries), otherwise `Err(Error)`.
+    pub fn add_observer(
+        &mut self,
+        element: &AXUIWrapper,
+        notifications: &[&'static str],
+        which: ObserverType,
+    ) -> Result<Vec<&str>> {
+        let observer: AXObserverRef = self.observer.as_ptr();
+        let context_ptr = self.get_or_insert_context(which).as_ptr();
+
+        // TODO: retry re-registering these.
+        let mut retry = vec![];
+        let added = notifications
+            .iter()
+            .filter_map(|name| {
+                debug!("adding {name} {element:x?} {observer:?}");
+                let notification = CFString::from_static_str(name);
+                match unsafe {
+                    AXObserverAddNotification(
+                        observer,
+                        element.as_ptr(),
+                        &notification,
+                        context_ptr.cast(),
+                    )
+                } {
+                    accessibility_sys::kAXErrorSuccess
+                    | accessibility_sys::kAXErrorNotificationAlreadyRegistered => Some(*name),
+                    accessibility_sys::kAXErrorCannotComplete => {
+                        retry.push(*name);
+                        None
+                    }
+                    result => {
+                        error!("error adding {name} {element:x?} {observer:?}: {result}");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        if added.is_empty() {
+            Err(Error::PermissionDenied(format!(
+                "{}: unable to register any observers!",
+                function_name!()
+            )))
+        } else {
+            Ok(retry)
+        }
+    }
+
+    /// Removes accessibility notifications from being observed for a given UI element.
+    ///
+    /// # Arguments
+    ///
+    /// * `which` - The type of observer context (application-specific or window-specific) for which to remove notifications.
+    /// * `element` - The `&AXUIWrapper` from which to remove notifications.
+    /// * `notifications` - A slice of static strings representing the notification names to remove.
+    pub fn remove_observer(
+        &mut self,
+        which: &ObserverType,
+        element: &AXUIWrapper,
+        notifications: &[&'static str],
+    ) {
+        if self.get_context(*which).is_none() {
+            debug!("{which:?} ({element}) already un-observed, skipping!");
+            return;
+        }
+
+        for name in notifications {
+            let observer: AXObserverRef = self.observer.deref().as_ptr();
+            let notification = CFString::from_static_str(name);
+            debug!("removing {name} {element:x?} {observer:?}");
+            let result =
+                unsafe { AXObserverRemoveNotification(observer, element.as_ptr(), &notification) };
+            if result != kAXErrorSuccess {
+                debug!("error removing {name} {element:x?} {observer:?}: {result}");
+            }
+        }
+        // AX may already have queued callbacks with this context pointer. Keep
+        // every refcon alive until `drop` removes the observer's run-loop source.
+    }
+
+    /// The static callback function for `AXObserver`. This function is called by the macOS Accessibility API
+    /// when an observed accessibility event occurs. It dispatches the event to the appropriate `notify_app` or `notify_window` handler.
+    ///
+    /// # Arguments
+    ///
+    /// * `_observer` - The `AXObserverRef` (unused).
+    /// * `element` - The `AXUIElementRef` associated with the notification.
+    /// * `notification` - The raw `CFStringRef` representing the notification name.
+    /// * `context` - A raw pointer to the user-defined context `ObserverContext`.
+    extern "C" fn callback(
+        _observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: CFStringRef,
+        context: *mut c_void,
+    ) {
+        let notification = NonNull::new(notification.cast_mut())
+            .map(|ptr| unsafe { ptr.as_ref() })
+            .map(CFString::to_string);
+        let context =
+            NonNull::new(context.cast::<ObserverContext>()).map(|ptr| unsafe { ptr.as_ref() });
+        let Some((notification, context)) = notification.zip(context) else {
+            return;
+        };
+
+        context.notify(&notification, element);
+    }
+
+    fn get_context(&self, which: ObserverType) -> Option<NonNull<ObserverContext>> {
+        let contexts = self.contexts.force_read();
+        contexts
+            .iter()
+            .find(|context| context.which == which)
+            .map(|context| NonNull::from_ref(context.as_ref().get_ref()))
+    }
+
+    fn get_or_insert_context(
+        &self,
+        // contexts: &mut Vec<Pin<Box<ObserverContext>>>,
+        which: ObserverType,
+    ) -> NonNull<ObserverContext> {
+        if let Some(context) = self.get_context(which) {
+            return context;
+        }
+        self.contexts.force_write().push(Box::pin(ObserverContext {
+            events: self.events.clone(),
+            resolver: self.resolver.clone(),
+            which,
+        }));
+        self.get_context(which)
+            .expect("inserted observer context must be present")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        mem::ManuallyDrop,
+        ptr::NonNull,
+        sync::{Arc, RwLock},
+    };
+    use stdext::sync::rw_lock::RwLockExt as _;
+
+    use super::ObserverType;
+    use crate::{events::EventSender, manager::app::AxObserverHandler, util::AXUIWrapper};
+
+    #[test]
+    fn same_observer_type_reuses_stable_context_pointer() {
+        let fake_ptr = NonNull::<AXUIWrapper>::dangling().as_ptr();
+        let observer = AXUIWrapper::from_retained(fake_ptr).unwrap();
+        let (events, _receiver) = EventSender::new();
+        let (resolver, _rx) = crossbeam_channel::unbounded();
+        let handler = ManuallyDrop::new(AxObserverHandler {
+            observer,
+            events,
+            resolver,
+            contexts: Arc::new(RwLock::new(Vec::new())),
+        });
+
+        let first = handler.get_or_insert_context(ObserverType::Window(42));
+        let reused = handler.get_or_insert_context(ObserverType::Window(42));
+
+        assert_eq!(reused, first);
+        assert_eq!(handler.contexts.as_ref().force_read().len(), 1);
+    }
+}

@@ -1,0 +1,185 @@
+# OpenYourMac configuration.
+# The app edits this file in place. The window manager reloads it automatically.
+# Unknown keys are kept when the app saves your changes.
+
+[options]
+# --- Behavior ---
+# Focus the window under the pointer.
+focus_follows_mouse = false
+# Move the pointer into each newly focused window.
+mouse_follows_focus = false
+# Restore saved column positions and sizes after a restart.
+session_restore = true
+# Keep an app's native tab group in a single column.
+native_tabs = true
+# Leave dialogs and preview windows outside the tiled strip.
+float_dialogs = true
+# Displays OpenYourMac leaves alone, by display UUID (Configuration › Displays sets this). Empty = manage every display.
+ignored_displays = []
+
+# --- Layout ---
+# Screen-width fractions used by the resize command.
+preset_column_widths = [0.25, 0.33, 0.5, 0.66, 0.75]
+# Space between adjacent windows, in points.
+gap_inner = 8
+# Space along the outside of the strip, in points. Explicit [padding] fields
+# or legacy padding_* options override the corresponding edge.
+gap_outer = 8
+# Reserve the screen area occupied by the Dock.
+dock_aware = true
+# Column centering policy: "never", "on-overflow", or "always".
+center_focused_column = "never"
+# Retain initial window heights; stacks and tabs still divide their column.
+keep_window_height = false
+
+# --- Appearance ---
+# Movement style: "smooth", "fast", or "instant".
+animation = "smooth"
+# Draw an outline around the active window.
+focus_border = false
+# Thickness of the active-window outline, in points.
+focus_border_width = 2
+# Outline color as a hexadecimal RGB value.
+focus_border_color = "#F7A028"
+# Corner radius of the outline, in points.
+focus_border_radius = 10
+# Darken windows that do not have focus.
+dim_inactive = false
+# Amount of dark shading applied to inactive windows, from 0 to 1.
+dim_inactive_opacity = 0.25
+# Briefly display a map of the strip during navigation.
+minimap = true
+# Keep the map visible while shortcut keys are held; click to focus or drag to reorder.
+strip_indicator_interactive = true
+# Show an edge marker and map pin for pinned columns.
+pin_indicator = true
+
+# --- Gestures & mouse ---
+# File-only continuous_swipe defaults to false. True extends strip edge limits;
+# [swipe].continuous takes priority over [options].continuous_swipe.
+# Swipe finger count: 0 disables it; choose 3 or 4 (4 avoids the usual Spaces gesture).
+swipe_gesture_fingers = 4
+# Use the natural scrolling direction for strip swipes.
+swipe_natural = true
+# Swipe end position: "snap" aligns a column; "free" keeps the scroll position.
+swipe_snap = "snap"
+# Allow a tiled window to be dragged to a different column position.
+drag_reorder = true
+# Keys held for strip scrolling: "ctrl + alt", "alt + cmd", "ctrl + cmd", or "off".
+scroll_modifier = "ctrl + alt"
+
+# Bind a command with "modifier + modifier - key"; use ctrl, alt, shift, or cmd.
+# A string gives one shortcut; an array gives alternatives for the same command.
+# Defaults include Control and Option so normal Option text shortcuts stay available.
+[bindings]
+# Focus the window to the left.
+window_focus_west = ["ctrl + alt - leftarrow", "ctrl + alt - h"]
+# Focus the window to the right.
+window_focus_east = ["ctrl + alt - rightarrow", "ctrl + alt - l"]
+# Focus the window above.
+window_focus_north = ["ctrl + alt - uparrow", "ctrl + alt - k"]
+# Focus the window below.
+window_focus_south = ["ctrl + alt - downarrow", "ctrl + alt - j"]
+# Focus the first window in the strip.
+window_focus_first = "ctrl + alt + cmd - leftarrow"
+# Focus the last window in the strip.
+window_focus_last = "ctrl + alt + cmd - rightarrow"
+# Move the active window to the left.
+window_swap_west = ["ctrl + alt + shift - leftarrow", "ctrl + alt + shift - h"]
+# Move the active window to the right.
+window_swap_east = ["ctrl + alt + shift - rightarrow", "ctrl + alt + shift - l"]
+# Move the active window up.
+window_swap_north = ["ctrl + alt + shift - uparrow", "ctrl + alt + shift - k"]
+# Move the active window down.
+window_swap_south = ["ctrl + alt + shift - downarrow", "ctrl + alt + shift - j"]
+# Move the active window to the start of the strip.
+window_swap_first = "ctrl + alt + cmd + shift - leftarrow"
+# Move the active window to the end of the strip.
+window_swap_last = "ctrl + alt + cmd + shift - rightarrow"
+# Place the active column at the center of the display.
+window_center = "ctrl + alt - c"
+# Select the next configured column width.
+window_resize = "ctrl + alt - r"
+# Switch the active column between full width and its previous width.
+window_fullwidth = "ctrl + alt - f"
+# Increase the active column width.
+window_wider = "ctrl + alt - equal"
+# Decrease the active column width.
+window_narrower = "ctrl + alt - minus"
+# Give the active window more height within its stack.
+window_taller = "ctrl + alt + shift - equal"
+# Give the active window less height within its stack.
+window_shorter = "ctrl + alt + shift - minus"
+# Give stacked windows equal heights.
+window_equalize = "ctrl + alt - 0"
+# Switch the active window between floating and tiled.
+window_manage = "ctrl + alt - t"
+# Join the active window to the column on its left.
+window_stack = "ctrl + alt - ]"
+# Separate the active window into its own column.
+window_unstack = "ctrl + alt + shift - ]"
+# Join the active window to the column on its right.
+window_consume_east = "ctrl + alt - ["
+# Separate the active window into a new column on its left.
+window_expel_west = "ctrl + alt + shift - ["
+# Switch the active column between stacked and tabbed views.
+window_tabbed = "ctrl + alt + shift - t"
+# Send the active window to the next display.
+window_nextdisplay = "ctrl + alt - n"
+# Pin the active column to the left edge, or release its pin.
+window_pin_left = "ctrl + alt - p"
+# Pin the active column to the right edge, or release its pin.
+window_pin_right = "ctrl + alt + shift - p"
+# Display the strip map until the shortcut keys are released.
+strip_show = "ctrl + alt - s"
+# Exit the window manager.
+quit = "ctrl + alt - q"
+# Focus the top window in column 1.
+window_focus_1 = "ctrl + alt - 1"
+# Focus the top window in column 2.
+window_focus_2 = "ctrl + alt - 2"
+# Focus the top window in column 3.
+window_focus_3 = "ctrl + alt - 3"
+# Focus the top window in column 4.
+window_focus_4 = "ctrl + alt - 4"
+# Focus the top window in column 5.
+window_focus_5 = "ctrl + alt - 5"
+# Focus the top window in column 6.
+window_focus_6 = "ctrl + alt - 6"
+# Focus the top window in column 7.
+window_focus_7 = "ctrl + alt - 7"
+# Focus the top window in column 8.
+window_focus_8 = "ctrl + alt - 8"
+# Focus the top window in the last column (9 means last).
+window_focus_9 = "ctrl + alt - 9"
+# Move the active column to position 1.
+window_swap_1 = "ctrl + alt + shift - 1"
+# Move the active column to position 2.
+window_swap_2 = "ctrl + alt + shift - 2"
+# Move the active column to position 3.
+window_swap_3 = "ctrl + alt + shift - 3"
+# Move the active column to position 4.
+window_swap_4 = "ctrl + alt + shift - 4"
+# Move the active column to position 5.
+window_swap_5 = "ctrl + alt + shift - 5"
+# Move the active column to position 6.
+window_swap_6 = "ctrl + alt + shift - 6"
+# Move the active column to position 7.
+window_swap_7 = "ctrl + alt + shift - 7"
+# Move the active column to position 8.
+window_swap_8 = "ctrl + alt + shift - 8"
+# Move the active column to the end (9 means last).
+window_swap_9 = "ctrl + alt + shift - 9"
+
+# Per-window horizontal_padding and vertical_padding use signed integer points
+# for tiled windows. Floating windows do not use this padding.
+# They override normal per-side inner-gap padding. Parsing accepts negative values,
+# but applied padding clamps to 0–64 points.
+# Set them in a [windows.<name>] table by hand, not in the app rule editor.
+[windows]
+
+[windows.pip]
+# Match picture-in-picture window titles.
+title = 'Picture.*(in)?.*[Pp]icture'
+# Keep matching windows outside the strip.
+floating = true

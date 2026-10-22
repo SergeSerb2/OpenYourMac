@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reports
+    url: https://github.com/SergeSerb2/OpenYourMac/security/policy
+    about: Read the private reporting instructions before sharing a vulnerability.
+  - name: Setup and troubleshooting
+    url: https://github.com/SergeSerb2/OpenYourMac#troubleshooting-and-faq
+    about: Check permissions, Spaces, config, and logs.

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.openyourmac.OpenYourMac.engine</string>
+    <key>CFBundleName</key>
+    <string>OpenYourMac Engine</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@OPENYOURMAC_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@OPENYOURMAC_VERSION@</string>
+    <key>OpenYourMacUpstreamBase</key>
+    <string>Paneru 0.5.2 base</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright (c) 2025 Karinushka@github. All rights reserved.
+Copyright (c) 2026 OpenYourMac contributors. MIT licensed.</string>
+  </dict>
+</plist>

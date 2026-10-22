@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>KeepAlive</key>
+    <dict>
+      <key>Crashed</key>
+      <true />
+      <key>SuccessfulExit</key>
+      <false />
+    </dict>
+    <key>Label</key>
+    <string>{name}</string>
+    <!-- launchd creates and holds this port, so `bootstrap_check_in` finds it
+         already made and clients keep their send rights across a restart. -->
+    <key>MachServices</key>
+    <dict>
+      <key>{name}</key>
+      <true />
+    </dict>
+    <key>Nice</key>
+    <integer>-20</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>Program</key>
+    <string>{bin_path}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>NO_COLOR</key>
+      <string>1</string>
+      <key>RUST_LOG</key>
+      <string>{rust_log}</string>
+      <key>XDG_CONFIG_HOME</key>
+      <string>{xdg_config_home}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true />
+    <key>StandardErrorPath</key>
+    <string>{error_log_path}</string>
+    <key>StandardOutPath</key>
+    <string>{out_log_path}</string>
+  </dict>
+</plist>

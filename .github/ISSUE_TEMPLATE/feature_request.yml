@@ -1,0 +1,21 @@
+name: Feature request
+description: Describe a user need and a proposed change.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need to do?
+      description: Describe the task and the current limit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds

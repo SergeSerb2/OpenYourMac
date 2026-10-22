@@ -1,0 +1,149 @@
+[package]
+name = "paneru"
+version = "0.5.2"
+edition = "2024"
+rust-version = "1.95.0"
+description = "OpenYourMac scrolling window manager engine for macOS, based on Paneru."
+homepage = "https://github.com/SergeSerb2/OpenYourMac"
+repository = "https://github.com/SergeSerb2/OpenYourMac"
+publish = false
+readme = "README.md"
+# Forked from Paneru 0.5.2 by Karinushka; retain engine/LICENSE.txt.
+license = "MIT"
+categories = ["os::macos-apis"]
+keywords = ["macos", "windowmanager", "window", "manager"]
+
+[lib]
+name = "paneru"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "openyourmac-engine"
+path = "src/main.rs"
+
+[lints.clippy]
+pedantic = "warn"
+
+# `lua` builds in the `init.lua` scripting runtime (`paneru.on`/
+# `paneru.bind`). On by default alongside `vendored`. Exactly one ABI feature
+# must be picked alongside `lua` (or `module`) — `luajit` is the one to pick
+# unless you have a reason not to: handlers run on the event path, and its
+# tracing JIT is worth roughly an order of magnitude there over the reference
+# interpreter. The `lua5x` features remain for scripts needing 5.2+ semantics
+# LuaJIT lacks.
+#
+# To build the loadable Lua module (`libpaneru.dylib` / `paneru.so` for
+# `require("paneru")` in external Lua interpreters):
+#   cargo build --release --lib --no-default-features --features module,lua54
+[features]
+default = ["lua", "vendored"]
+vendored = ["mlua/vendored"]
+module = ["lua-base", "mlua/module"]
+lua = [
+  "lua-base",
+  "luajit",
+]
+lua-base = [
+  "dep:mlua",
+  "dep:async-executor",
+]
+luajit = ["mlua/luajit"]
+lua55 = ["mlua/lua55"]
+lua52 = ["mlua/lua52"]
+lua53 = ["mlua/lua53"]
+lua54 = ["mlua/lua54"]
+
+[profile.fast-release]
+inherits = "release"
+codegen-units = 256
+lto = false
+debug = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+
+[dependencies]
+accessibility-sys = "0.2"
+arc-swap = "1.9"
+# The Lua worker's executor and its channels. All three arrive with bevy
+# already, so this pins versions rather than widening the dependency graph:
+# `async-executor` is the same `LocalExecutor` bevy's own `spawn_local` uses.
+async-channel = "2.5"
+# Async `RwLock`/`Mutex`: unlike the std ones their guards are `Send` and may be
+# held across an `.await`, which is what the socket tasks need. Same smol family
+# as `async-channel`/`async-executor` and bevy's task pool, and already in the
+# tree via those, so it costs nothing a tokio dependency would not double.
+async-lock = "3.4"
+async-executor = { version = "1.14", optional = true }
+async-mach-ports = "0.3"
+cfg-if = "1.0"
+futures-lite = "2.6"
+bevy = { version = "0.19", default-features = false, features = [ "multi_threaded", "debug" ] }
+bitflags = "2.13"
+chrono = "0.4"
+clap = { version = "4.6", features = ["cargo", "derive"] }
+# Already in the tree via bevy_time. Picked over std's mpsc because its
+# `Receiver` is `Sync`, which is what lets the Lua worker handle be a plain
+# `Res` rather than a `Mutex` behind a `ResMut`.
+crossbeam-channel = "0.5"
+derive_more = { version = "2.1", features = ["deref", "deref_mut"] }
+embed_plist = "1.2"
+launchctl = "0.3"
+libc = "0.2"
+mlua = { version = "0.12", default-features = false, optional = true, features = [
+  "serialize",
+  "async",
+] }
+notify = { version = "8.2", features = ["macos_fsevent"] }
+num_enum = "0.7"
+objc2 = { version = "0.6", features = ["catch-all", "exception"] }
+objc2-app-kit = { version = "0.3", features = [
+  "NSAlert",
+  "NSBezierPath",
+  "NSColor",
+  "NSGraphics",
+  "NSGraphicsContext",
+  "NSScreen",
+  "NSView",
+  "NSWindow",
+  "NSFont",
+  "NSAttributedString",
+  "NSParagraphStyle",
+  "NSStringDrawing",
+  "NSImage",
+  "NSControl",
+  "NSPanel",
+  "NSVisualEffectView",
+  "NSBitmapImageRep",
+] }
+objc2-core-foundation = { version = "0.3", features = ["CFRunLoop"] }
+objc2-core-graphics = "0.3"
+objc2-quartz-core = { version = "0.3", features = [
+  "CALayer",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+] }
+objc2-foundation = { version = "0.3", features = [
+  "NSNotification",
+  "NSProcessInfo",
+  "NSAttributedString",
+  "NSDictionary",
+  "NSBundle",
+] }
+regex = "1.13"
+rmp-serde = "1.2"
+scopeguard = "1.2"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+stdext = "0.3"
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ctrlc = { version = "3.5", features = ["termination"] }
+xdg = "3.0"
+mockall = "0.15"
+
+[build-dependencies]
+cfg-if = "1.0"

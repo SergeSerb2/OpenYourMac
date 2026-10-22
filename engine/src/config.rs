@@ -1,0 +1,2660 @@
+use arc_swap::{ArcSwap, Guard};
+use bevy::ecs::resource::Resource;
+use objc2_core_foundation::{CFData, CFString};
+use regex::Regex;
+use serde::{Deserialize, Deserializer, de};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    ffi::c_void,
+    fs::read_to_string,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    ptr::NonNull,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
+use stdext::function_name;
+use tracing::{error, info, warn};
+
+use self::decorations::{
+    BorderRadiusOption, DescriptorStyle, IndicatorFormat, IndicatorStyle, MenubarOrientation,
+};
+use self::swipe::SwipeGestureDirection;
+
+#[cfg(test)]
+use crate::commands::{MoveFocus, Operation, ResizeDirection};
+use crate::{
+    commands::Command,
+    manager::ProcessApi,
+    platform::{Modifiers, OSStatus, macos_major_version},
+};
+use crate::{
+    errors::{Error, Result},
+    util::MacResult,
+};
+use crate::{platform::CFStringRef, util::AXUIWrapper};
+
+pub mod chain;
+pub mod decorations;
+pub mod padding;
+pub mod snippet;
+pub mod swipe;
+mod validation;
+pub mod watch;
+
+// Startup workspaces share the limit that workspace commands enforce.
+const MAX_DEFAULT_WORKSPACES: u32 = crate::types::commands::MAX_VIRTUAL_WORKSPACES;
+
+/// A `LazyLock` that determines the path to the application's configuration file.
+/// It resolves `OPENYOURMAC_CONFIG` first, then the `OpenYourMac` home config path.
+/// The path may not exist yet: the app owns file provisioning, while the engine
+/// loads embedded product defaults and retries the watcher until it appears.
+/// The TOML configuration file, if there is one to use. `None` when an
+/// `init.lua` exists, since a script disables the TOML entirely (see
+/// [`Config::defaults`]).
+pub static CONFIGURATION_FILE: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
+    #[cfg(feature = "lua")]
+    if let Some(script) = discover_lua_file() {
+        info!(
+            "{}: {} is in charge; the TOML configuration is ignored",
+            function_name!(),
+            script.display()
+        );
+        return None;
+    }
+    // The CLI validates resolution before startup. Keep this cache infallible;
+    // callers that need an error use resolved_configuration_file directly.
+    discover_configuration_file().or_else(|| resolved_configuration_file().ok())
+});
+
+const DEFAULT_CONFIGURATION: &str = include_str!("../../resources/default-config.toml");
+
+fn default_configuration_file() -> std::io::Result<PathBuf> {
+    let home = env::var_os("HOME")
+        .ok_or_else(|| std::io::Error::new(ErrorKind::NotFound, "HOME is not set"))?;
+    Ok(PathBuf::from(home).join(".config/openyourmac/openyourmac.toml"))
+}
+
+/// Finds the existing product configuration file, if present.
+pub fn discover_configuration_file() -> Option<PathBuf> {
+    resolved_configuration_file()
+        .ok()
+        .filter(|path| path.exists())
+}
+
+/// `OpenYourMac` never discovers `~/.paneru` or reads `PANERU_CONFIG`.
+/// An explicit override is authoritative even when missing.
+pub fn resolved_configuration_file() -> std::io::Result<PathBuf> {
+    env::var_os("OPENYOURMAC_CONFIG")
+        .map_or_else(default_configuration_file, |path| Ok(PathBuf::from(path)))
+}
+
+/// Validate through the same typed loader and binding resolver as runtime.
+/// This command never constructs platform handlers or queries Accessibility.
+pub fn check_config(path: &Path) -> bool {
+    let input = match read_to_string(path) {
+        Ok(input) => input,
+        Err(err) => {
+            eprintln!("error: {}: {err}", path.display());
+            return false;
+        }
+    };
+    if let Err(err) = toml::from_str::<InnerConfig>(&input) {
+        let (line, col) = err.span().map_or((1, 1), |span| {
+            let prefix = &input[..span.start.min(input.len())];
+            (
+                prefix.bytes().filter(|b| *b == b'\n').count() + 1,
+                prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1,
+            )
+        });
+        eprintln!("error: {}:{line}:{col}: {}", path.display(), err.message());
+        return false;
+    }
+    match Config::new(path) {
+        Ok(config) => {
+            for warning in &config.inner().binding_warnings {
+                eprintln!("warning: {warning}");
+            }
+            println!("ok: {}", path.display());
+            true
+        }
+        Err(err) => {
+            eprintln!("error: {}: {err}", path.display());
+            false
+        }
+    }
+}
+
+/// Finds the first existing Lua init script from supported locations, mirroring
+/// [`discover_configuration_file`]. Honors `$PANERU_LUA` first.
+#[cfg(feature = "lua")]
+pub fn discover_lua_file() -> Option<PathBuf> {
+    if let Ok(path_str) = env::var("PANERU_LUA") {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            return Some(path);
+        }
+        warn!(
+            "{}: $PANERU_LUA is set to {}, but the file does not exist. Falling back to default locations.",
+            function_name!(),
+            path.display()
+        );
+    }
+
+    let standard_paths = [env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".paneru.lua"))];
+
+    let xdg_dirs = xdg::BaseDirectories::with_prefix("paneru");
+    let xdg_paths = xdg_dirs.find_config_files("init.lua");
+
+    standard_paths
+        .into_iter()
+        .flatten()
+        .chain(xdg_paths)
+        .find(|path| path.exists())
+}
+
+/// Uses only an existing Lua script. Creating a stub on a fresh product install
+/// would override the TOML that the app provisions later.
+#[cfg(feature = "lua")]
+pub fn ensure_lua_file() -> std::io::Result<Option<PathBuf>> {
+    resolved_configuration_file()?;
+    Ok(discover_lua_file())
+}
+
+/// Parses a command argument vector into a [`Command`] (e.g. `["window",
+/// "focus", "east"]`), mapping the shared vocabulary crate's parse error into
+/// this crate's configuration error.
+pub fn parse_command(argv: &[&str]) -> Result<Command> {
+    crate::types::commands::parse_command(argv)
+        .map_err(|err| Error::InvalidConfig(format!("{}: {err}", function_name!())))
+}
+
+/// `Config` manages the application's configuration, including options, keybindings, and window-specific parameters.
+/// It provides methods for loading, reloading, and querying configuration settings.
+#[derive(Clone, Debug, Resource)]
+pub struct Config {
+    inner: Arc<ArcSwap<InnerConfig>>,
+}
+
+impl Config {
+    /// Creates a new `Config` instance by loading the configuration from the specified path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A reference to the path of the configuration file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Self)` if the configuration is loaded successfully, otherwise `Err(Error)` with an error message.
+    pub fn new(path: &Path) -> Result<Self> {
+        let input = read_to_string(path)?;
+        Ok(Config {
+            inner: Arc::new(ArcSwap::from_pointee(InnerConfig::new(&input)?)),
+        })
+    }
+
+    /// The configuration with every option left at its default, used when
+    /// there is no TOML file (e.g. a Lua-only setup; see [`CONFIGURATION_FILE`]).
+    /// Includes the same options, bindings and rules as the app's shipped config.
+    pub fn defaults() -> Result<Self> {
+        Ok(Config {
+            inner: Arc::new(ArcSwap::from_pointee(InnerConfig::new(
+                DEFAULT_CONFIGURATION,
+            )?)),
+        })
+    }
+
+    /// Loads `path` if there is one, otherwise falls back to the defaults.
+    pub fn load(path: Option<&Path>) -> Result<Self> {
+        match path {
+            Some(path) => match read_to_string(path) {
+                Ok(input) => Self::try_from(input.as_str()),
+                Err(err) if err.kind() == ErrorKind::NotFound => {
+                    static LOGGED: std::sync::Once = std::sync::Once::new();
+                    LOGGED.call_once(|| info!(
+                        "Configuration {} is missing; using built-in product defaults without creating a file",
+                        path.display()
+                    ));
+                    Self::defaults()
+                }
+                Err(err) => Err(err.into()),
+            },
+            None => Self::defaults(),
+        }
+    }
+
+    /// Reloads the configuration from the specified path, updating the internal options and keybindings.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A reference to the path of the new configuration file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the configuration is reloaded successfully, otherwise `Err(Error)` with an error message.
+    pub fn reload_config(&mut self, path: &Path) -> Result<()> {
+        let input = read_to_string(path)?;
+        let new = InnerConfig::new(&input)?;
+        self.inner.store(Arc::new(new));
+        Ok(())
+    }
+
+    /// Atomically adopts another config's inner data via a lock-free
+    /// `ArcSwap::store`, so every shared handle to this `Config` observes the
+    /// new settings. Used by the Lua hot-reload path.
+    #[cfg(feature = "lua")]
+    pub(crate) fn replace_inner_from(&self, other: &Config) {
+        self.inner.store(other.inner.load_full());
+    }
+
+    /// Returns a read guard to the inner `InnerConfig` for read-only access.
+    ///
+    /// # Returns
+    ///
+    /// A `Guard<Arc<InnerConfig>>` allowing read access to `InnerConfig`.
+    fn inner(&self) -> Guard<Arc<InnerConfig>> {
+        self.inner.load()
+    }
+
+    /// Returns a clone of the `MainOptions` from the current configuration.
+    ///
+    /// # Returns
+    ///
+    /// A `MainOptions` struct containing the main configuration options.
+    pub fn options(&self) -> MainOptions {
+        self.inner().options.clone()
+    }
+
+    // Exponential ease-out decay rate (per second) consumed by the animation
+    // systems as `t = 1 - e^(-rate*dt)`. Higher values feel snappier; very large
+    // values collapse to an instant snap.
+    // Suggested range: 8..20 for a fluid feel. Unset = instant (no animation),
+    pub fn animation_speed(&self) -> f64 {
+        // Upstream uses exponential convergence, not a spring. Reach 95% of the
+        // target in the requested duration: rate = -ln(.05) / seconds. Damping
+        // scales this rate; E2 can replace this approximation with a spring.
+        let duration = self.animation_duration_ms();
+        if duration == 0.0 {
+            1_000_000.0
+        } else {
+            -0.05_f64.ln() * 1000.0 / duration * self.animation_damping()
+        }
+    }
+
+    /// Finds a keybinding matching the given `keycode` and `modifier` mask.
+    ///
+    /// # Arguments
+    ///
+    /// * `keycode` - The raw key code of the keybinding to find.
+    /// * `mask` - The modifier mask (e.g., `Alt`, `Shift`, `Cmd`, `Ctrl`) of the keybinding.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Command)` if a matching keybinding is found, otherwise `None`.
+    pub fn find_keybind(&self, keycode: u8, mask: Modifiers) -> Option<Command> {
+        let config = self.inner();
+        config
+            .bindings
+            .values()
+            .flat_map(|binds| binds.all())
+            .find_map(|bind| {
+                (bind.valid && bind.code == keycode && bind.modifiers.matches(mask))
+                    .then_some(bind.command.clone())
+            })
+    }
+
+    /// Finds window properties for a given `title` and `bundle_id`.
+    /// Returns matching rules in ascending rule-name order. The first supplied
+    /// property wins, so name specific rules before general fallback rules.
+    /// A rule matches when its bundle ID (if any) and title regex match.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - The title of the window to match.
+    /// * `bundle_id` - The bundle identifier of the application owning the window.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<WindowParams>` containing all matching window rules.
+    pub fn find_window_properties(&self, title: &str, bundle_id: &str) -> Vec<WindowParams> {
+        self.inner()
+            .windows
+            .as_ref()
+            .map(|windows| {
+                windows
+                    .values()
+                    .filter(|params| {
+                        let bundle_match =
+                            params.bundle_id.as_ref().map(|id| id.as_str() == bundle_id);
+                        bundle_match.is_none_or(|m| m) && params.title.is_match(title)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Returns `true` if any window rule for the given bundle ID requests that the
+    /// process be forcibly managed even when macOS reports it as unobservable.
+    pub fn should_force_manage_process(&self, process: &dyn ProcessApi) -> bool {
+        self.inner().windows.as_ref().is_some_and(|windows| {
+            let Some(bundle_id) = process
+                .application()
+                .as_ref()
+                .and_then(|app| app.bundleIdentifier())
+                .map(|id| id.to_string())
+            else {
+                return false;
+            };
+            windows.values().any(|params| {
+                params
+                    .bundle_id
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == bundle_id)
+                    && params.manage.is_some_and(|manage| manage)
+            })
+        })
+    }
+
+    pub fn sliver_height(&self) -> f64 {
+        chain::finite(self.options().sliver_height, 1.0, 0.1, 1.0)
+    }
+
+    pub fn sliver_width(&self) -> i32 {
+        i32::from(self.options().sliver_width.unwrap_or(5)).max(1)
+    }
+
+    pub fn edge_padding(&self) -> (i32, i32, i32, i32) {
+        let config = self.inner();
+        let o = &config.options;
+        let p = config.padding.as_ref();
+        (
+            i32::from(
+                p.and_then(|p| p.top)
+                    .or(o.padding_top)
+                    .unwrap_or_else(|| self.default_outer_padding()),
+            ),
+            i32::from(
+                p.and_then(|p| p.right)
+                    .or(o.padding_right)
+                    .unwrap_or_else(|| self.default_outer_padding()),
+            ),
+            i32::from(
+                p.and_then(|p| p.bottom)
+                    .or(o.padding_bottom)
+                    .unwrap_or_else(|| self.default_outer_padding()),
+            ),
+            i32::from(
+                p.and_then(|p| p.left)
+                    .or(o.padding_left)
+                    .unwrap_or_else(|| self.default_outer_padding()),
+            ),
+        )
+    }
+
+    pub fn preset_column_widths(&self) -> Vec<f64> {
+        let widths: Vec<_> = self
+            .options()
+            .preset_column_widths
+            .into_iter()
+            .filter(|width| width.is_finite() && *width > 0.05 && *width <= 1.0)
+            .collect();
+        if widths.is_empty() {
+            default_preset_column_widths()
+        } else {
+            widths
+        }
+    }
+
+    pub fn preset_stack_heights(&self) -> Vec<f64> {
+        let heights: Vec<_> = self
+            .options()
+            .preset_stack_heights
+            .into_iter()
+            .filter(|height| height.is_finite() && *height > 0.0 && *height <= 1.0)
+            .collect();
+        if heights.is_empty() {
+            default_preset_stack_heights()
+        } else {
+            heights
+        }
+    }
+
+    pub fn swipe_gesture_direction(&self) -> SwipeGestureDirection {
+        let config = self.inner();
+        config
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.gesture.as_ref())
+            .and_then(|gesture| gesture.direction.clone())
+            .or(config.options.swipe_gesture_direction.clone())
+            .unwrap_or_else(|| {
+                if config.options.swipe_natural.unwrap_or(true) {
+                    SwipeGestureDirection::Natural
+                } else {
+                    SwipeGestureDirection::Reversed
+                }
+            })
+    }
+
+    pub fn swipe_gesture_fingers(&self) -> Option<usize> {
+        let config = self.inner();
+        let fingers = config
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.gesture.as_ref())
+            .and_then(|gesture| gesture.fingers_count)
+            .or(config.options.swipe_gesture_fingers)
+            .unwrap_or(4);
+        match fingers {
+            0 => None,
+            3..=5 => Some(fingers),
+            _ => Some(4),
+        }
+    }
+
+    #[allow(clippy::unused_self)] // Retain the upstream config accessor contract.
+    pub fn swipe_vertical(&self) -> bool {
+        // Product strips are horizontal. Even nested upstream settings cannot
+        // opt into gesture-driven virtual-workspace row switching.
+        false
+    }
+
+    pub fn has_dim_inactive_color(&self) -> bool {
+        let config = self.inner();
+        if let Some(dim) = config
+            .decorations
+            .as_ref()
+            .and_then(|d| d.inactive.as_ref())
+            .and_then(|i| i.dim.as_ref())
+        {
+            return dim.color.is_some();
+        }
+        config.options.dim_inactive_color.is_some() || config.options.dim_inactive.unwrap_or(false)
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn dim_inactive_opacity(&self) -> f32 {
+        let config = self.inner();
+        if let Some(dim) = config
+            .decorations
+            .as_ref()
+            .and_then(|d| d.inactive.as_ref())
+            .and_then(|i| i.dim.as_ref())
+        {
+            return if dim.color.is_some() {
+                dim.opacity
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        }
+        if config.options.dim_inactive_color.is_some() {
+            return config
+                .options
+                .dim_inactive_windows
+                .filter(|value| value.is_finite())
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
+        }
+        if config.options.dim_inactive.unwrap_or(false) {
+            chain::finite(config.options.dim_inactive_opacity, 0.25, 0.0, 0.9) as f32
+        } else {
+            0.0
+        }
+    }
+
+    pub fn dim_inactive_color(&self) -> (f64, f64, f64) {
+        let config = self.inner();
+        let dim = config
+            .decorations
+            .as_ref()
+            .and_then(|d| d.inactive.as_ref())
+            .and_then(|i| i.dim.as_ref());
+        let color = match dim {
+            Some(dim) => dim.color.as_deref(),
+            None => config.options.dim_inactive_color.as_deref(),
+        };
+        color.map_or((0.0, 0.0, 0.0), parse_hex_color)
+    }
+
+    pub fn border_active_window(&self) -> bool {
+        let config = self.inner();
+        config
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.active.as_ref())
+            .and_then(|active| active.border.as_ref())
+            .and_then(|border| border.enabled)
+            .or(config.options.border_active_window)
+            .or(config.options.focus_border)
+            .unwrap_or(false)
+    }
+
+    pub fn border_color(&self) -> (f64, f64, f64) {
+        let config = self.inner();
+        config
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.active.as_ref())
+            .and_then(|active| active.border.as_ref())
+            .and_then(|border| border.color.as_deref())
+            .or(config.options.border_color.as_deref())
+            .map_or_else(
+                || {
+                    let (r, g, b, _) = self.focus_border_color();
+                    (r, g, b)
+                },
+                parse_hex_color,
+            )
+    }
+
+    pub fn border_opacity(&self) -> f64 {
+        let config = self.inner();
+        config
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.active.as_ref())
+            .and_then(|active| active.border.as_ref())
+            .and_then(|border| border.opacity)
+            .or(config.options.border_opacity)
+            .filter(|value| value.is_finite())
+            .unwrap_or_else(|| self.focus_border_color().3)
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn border_width(&self) -> f64 {
+        let config = self.inner();
+        config
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.active.as_ref())
+            .and_then(|active| active.border.as_ref())
+            .and_then(|border| border.width)
+            .or(config.options.border_width)
+            .filter(|value| value.is_finite())
+            .unwrap_or_else(|| self.focus_border_width())
+            .max(0.0)
+    }
+
+    pub fn border_radius(&self) -> BorderRadiusOption {
+        let config = self.inner();
+        match config
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.active.as_ref())
+            .and_then(|active| active.border.as_ref())
+            .and_then(|border| border.radius.clone())
+            .or(config.options.border_radius.clone())
+            .unwrap_or_else(|| BorderRadiusOption::Value(self.focus_border_radius()))
+        {
+            BorderRadiusOption::Auto if macos_major_version() == 26 => BorderRadiusOption::Auto,
+            BorderRadiusOption::Value(value) => BorderRadiusOption::Value(chain::finite(
+                Some(value),
+                self.focus_border_radius(),
+                0.0,
+                f64::MAX,
+            )),
+            BorderRadiusOption::Auto => BorderRadiusOption::Value(10.0),
+        }
+    }
+
+    pub fn menubar_height(&self) -> Option<i32> {
+        self.options().menubar_height.map(i32::from)
+    }
+
+    pub fn swipe_sensitivity(&self) -> f64 {
+        let config = self.inner();
+        chain::finite(
+            config
+                .swipe
+                .as_ref()
+                .and_then(|swipe| swipe.sensitivity)
+                .or(config.options.swipe_sensitivity),
+            1.6,
+            0.2,
+            5.0,
+        )
+    }
+
+    pub fn continuous_swipe(&self) -> bool {
+        let config = self.inner();
+        config
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.continuous)
+            .or(config.options.continuous_swipe)
+            // Product swipes stop at the strip edges unless explicitly extended.
+            .unwrap_or(false)
+    }
+
+    pub fn swipe_deceleration(&self) -> f64 {
+        let config = self.inner();
+        config
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.deceleration)
+            .or(config.options.swipe_deceleration)
+            .filter(|value| value.is_finite())
+            .unwrap_or(4.0)
+            .clamp(1.0, 10.0)
+    }
+
+    pub fn mouse_resize_modifier(&self) -> Option<Modifiers> {
+        self.options().mouse_resize_modifier
+    }
+
+    pub fn restore_enabled(&self) -> bool {
+        self.inner()
+            .restore
+            .as_ref()
+            .and_then(|restore| restore.enabled)
+            .or(self.options().session_restore)
+            .unwrap_or(true)
+    }
+
+    pub fn restore_startup_grace(&self) -> Duration {
+        Duration::from_millis(
+            self.inner()
+                .restore
+                .as_ref()
+                .and_then(|restore| restore.startup_grace_ms)
+                .unwrap_or(2000),
+        )
+    }
+
+    pub fn restore_missing_windows(&self) -> MissingWindowBehavior {
+        self.inner()
+            .restore
+            .as_ref()
+            .and_then(|restore| restore.missing_windows)
+            .unwrap_or(MissingWindowBehavior::Ignore)
+    }
+
+    pub fn swipe_scroll_modifier(&self) -> Option<Modifiers> {
+        let config = self.inner();
+        if let Some(modifier) = config
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.scroll.as_ref())
+            .and_then(|scroll| scroll.modifier)
+        {
+            return Some(modifier);
+        }
+        chain::scroll_modifier(
+            config
+                .options
+                .scroll_modifier
+                .as_deref()
+                .unwrap_or("ctrl + alt"),
+        )
+    }
+
+    #[allow(clippy::unused_self)] // Retain the upstream config accessor contract.
+    pub fn swipe_scroll_vertical_modifier(&self) -> Option<Modifiers> {
+        // Modifier scrolling is also horizontal in the product dialect.
+        None
+    }
+
+    pub fn swipe_scroll_window_step(&self) -> bool {
+        self.inner()
+            .swipe
+            .as_ref()
+            .and_then(|swipe| swipe.scroll.as_ref())
+            .and_then(|scroll| scroll.window_step)
+            .unwrap_or(true)
+    }
+
+    pub fn window_dim_ratio(&self, is_dark: bool) -> Option<f32> {
+        let config = self.inner();
+        let dim = config
+            .decorations
+            .as_ref()
+            .and_then(|d| d.inactive.as_ref())
+            .and_then(|i| i.dim.as_ref());
+        let ratio = if let Some(dim) = dim {
+            if dim.color.is_some() {
+                return None;
+            }
+            if is_dark {
+                dim.opacity_night.or(dim.opacity)
+            } else {
+                dim.opacity
+            }
+        } else {
+            if config.options.dim_inactive.unwrap_or(false)
+                || config.options.dim_inactive_color.is_some()
+            {
+                return None;
+            }
+            config.options.dim_inactive_windows
+        };
+        ratio
+            .filter(|value| value.is_finite())
+            .map(|value| value.clamp(-1.0, 1.0))
+    }
+
+    /// Returns the allowed hidden fraction of a window before a focus change
+    /// forces it into view. 0.0 = always bring into view (eager),
+    /// 1.0 = never move unless fully invisible (lazy). Default: 0.0.
+    pub fn window_hidden_ratio(&self) -> f64 {
+        self.options()
+            .window_hidden_ratio
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn window_resize_cycle(&self) -> bool {
+        self.options().window_resize_cycle.unwrap_or(true)
+    }
+
+    pub fn auto_center(&self) -> bool {
+        self.options().auto_center.is_some_and(|center| center)
+    }
+
+    pub fn horizontal_mouse_warp(&self) -> Option<i16> {
+        self.options().horizontal_mouse_warp
+    }
+
+    /// Returns `true` if focus should follow the mouse based on the current configuration.
+    /// If the configuration option is not set, it defaults to `false`.
+    pub fn focus_follows_mouse(&self) -> bool {
+        // There is no nested upstream focus table. Explicit flat values win;
+        // absent values use the product's false, not upstream's true.
+        self.options().focus_follows_mouse.unwrap_or(false)
+    }
+
+    /// Returns `true` if the mouse cursor should follow the focused window based on the current configuration.
+    /// If the configuration option is not set, it defaults to `false`.
+    pub fn mouse_follows_focus(&self) -> bool {
+        self.options().mouse_follows_focus.unwrap_or(false)
+    }
+
+    pub fn horizontal_mouse_warp_offset(&self) -> i32 {
+        self.options().horizontal_mouse_warp_offset.unwrap_or(0)
+    }
+
+    pub fn reap_empty_workspaces(&self) -> bool {
+        // Default is disabled..
+        self.options()
+            .reap_empty_workspaces
+            .is_some_and(|reap| reap)
+    }
+
+    pub fn native_tabs_enabled(&self) -> bool {
+        let options = self.options();
+        options
+            .disable_native_tabs
+            .map_or_else(|| options.native_tabs.unwrap_or(true), |disabled| !disabled)
+    }
+
+    pub fn workspace_menu_status(&self) -> bool {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.workspace_menu_status)
+            .is_none_or(|enabled| enabled)
+    }
+
+    pub fn workspace_popup_status(&self) -> bool {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.workspace_popup_status)
+            .is_none_or(|enabled| enabled)
+    }
+
+    pub fn virtual_workspace_animations(&self) -> bool {
+        // Default is disabled
+        self.options()
+            .virtual_workspace_animations
+            .is_some_and(|enabled| enabled)
+    }
+
+    /// Number of virtual workspaces to pre-create on each physical space at
+    /// startup. Default: 1 (just the physical space itself, no extra virtual
+    /// workspaces).
+    pub fn default_workspaces(&self) -> u32 {
+        self.inner()
+            .default_workspaces
+            .unwrap_or(1)
+            .clamp(1, MAX_DEFAULT_WORKSPACES)
+    }
+
+    pub fn insert_windows_mid_strip(&self) -> bool {
+        // Default is disabled: appending to the end of the strip is the
+        // expected behaviour, especially when moving several windows.
+        self.options()
+            .insert_windows_mid_strip
+            .is_some_and(|enabled| enabled)
+    }
+
+    pub fn create_workspace_automatically(&self) -> bool {
+        self.options()
+            .create_virtual_workspace_automatically
+            .is_some_and(|enabled| enabled)
+    }
+    pub fn menubar_orientation(&self) -> MenubarOrientation {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.orientation)
+            .unwrap_or(MenubarOrientation::Default)
+    }
+    pub fn menubar_gradient(&self) -> Vec<(f64, f64, f64)> {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.colors.as_ref())
+            .into_iter()
+            .flatten()
+            .map(|hex_string| resolve_menubar_color(hex_string))
+            .collect()
+    }
+    /// True when at least one menubar colour is an explicit hex stop rather than
+    /// the empty-string system-appearance sentinel.
+    pub fn menubar_has_external_gradient(&self) -> bool {
+        self.menubar_gradient()
+            .iter()
+            .any(|(red, _, _)| !red.is_nan())
+    }
+    pub fn menubar_gradient_angle(&self) -> f64 {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.angle)
+            .filter(|value| value.is_finite())
+            .unwrap_or(90.0)
+    }
+    pub fn menubar_descriptor_style(&self) -> DescriptorStyle {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.descriptor.as_ref())
+            .and_then(|descriptor_options| descriptor_options.style)
+            .unwrap_or(DescriptorStyle::Symbol)
+    }
+    pub fn menubar_descriptor_text(&self) -> String {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.descriptor.as_ref())
+            .and_then(|descriptor_options| descriptor_options.text.clone())
+            .unwrap_or(String::from("VW"))
+    }
+    pub fn menubar_descriptor_symbol(&self) -> String {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.descriptor.as_ref())
+            .and_then(|descriptor_options| descriptor_options.symbol.clone())
+            .unwrap_or(String::from("fish.fill"))
+    }
+    pub fn menubar_indicator_style(&self) -> IndicatorStyle {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.indicator.as_ref())
+            .and_then(|indicator| indicator.style)
+            .unwrap_or(IndicatorStyle::Mono)
+    }
+    pub fn menubar_indicator_format(&self) -> IndicatorFormat {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.indicator.as_ref())
+            .and_then(|indicator| indicator.format)
+            .unwrap_or(IndicatorFormat::Default)
+    }
+    pub fn menubar_indicator_font_size(&self) -> f64 {
+        const DEFAULT_FONT_SIZE: f64 = 13.0;
+        const MIN_FONT_SIZE: f64 = 1.0;
+        const MAX_FONT_SIZE: f64 = 24.0;
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.indicator.as_ref())
+            .and_then(|indicator| indicator.font_size)
+            .filter(|font_size| font_size.is_finite())
+            .unwrap_or(DEFAULT_FONT_SIZE)
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    }
+    pub fn menubar_indicator_active_character(&self) -> char {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.indicator.as_ref())
+            .and_then(|indicator| indicator.active_character)
+            .unwrap_or('☉')
+    }
+    pub fn menubar_indicator_inactive_character(&self) -> char {
+        self.inner()
+            .decorations
+            .as_ref()
+            .and_then(|decorations| decorations.menu.as_ref())
+            .and_then(|menubar| menubar.indicator.as_ref())
+            .and_then(|indicator| indicator.inactive_character)
+            .unwrap_or('○')
+    }
+}
+
+fn resolve_menubar_color(hex: &str) -> (f64, f64, f64) {
+    let check_string = hex.is_empty();
+    if !check_string {
+        return parse_hex_color(hex);
+    }
+    (f64::NAN, f64::NAN, f64::NAN)
+}
+
+fn parse_hex_color(hex: &str) -> (f64, f64, f64) {
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    if hex.len() != 6 || !hex.is_ascii() {
+        return (1.0, 1.0, 1.0);
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
+    (
+        f64::from(r) / 255.0,
+        f64::from(g) / 255.0,
+        f64::from(b) / 255.0,
+    )
+}
+
+impl Default for Config {
+    /// Returns a default `Config` instance with an empty `InnerConfig`.
+    fn default() -> Self {
+        Config {
+            inner: Arc::new(ArcSwap::from_pointee(InnerConfig::default())),
+        }
+    }
+}
+
+impl TryFrom<&str> for Config {
+    type Error = crate::errors::Error;
+
+    fn try_from(input: &str) -> std::result::Result<Self, Self::Error> {
+        Ok(Config {
+            inner: Arc::new(ArcSwap::from_pointee(InnerConfig::new(input)?)),
+        })
+    }
+}
+
+impl From<(MainOptions, Vec<WindowParams>)> for Config {
+    fn from((options, params): (MainOptions, Vec<WindowParams>)) -> Self {
+        Self {
+            inner: Arc::new(ArcSwap::from_pointee(InnerConfig {
+                options,
+                windows: params
+                    .into_iter()
+                    .enumerate()
+                    .map(|(nr, param)| Some((format!("param{nr}"), param)))
+                    .collect(),
+                ..Default::default()
+            })),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum OneOrMore {
+    Single(Keybinding),
+    Multiple(Vec<Keybinding>),
+}
+
+impl OneOrMore {
+    fn all(&self) -> Vec<&Keybinding> {
+        match self {
+            OneOrMore::Single(one) => vec![one],
+            OneOrMore::Multiple(many) => many.iter().collect::<Vec<_>>(),
+        }
+    }
+
+    fn all_mut(&mut self) -> Vec<&mut Keybinding> {
+        match self {
+            OneOrMore::Single(one) => vec![one],
+            OneOrMore::Multiple(many) => many.iter_mut().collect::<Vec<_>>(),
+        }
+    }
+}
+
+/// `InnerConfig` holds the actual configuration data parsed from a file, including options, keybindings, and window parameters.
+/// It is typically accessed via an `Arc<RwLock<InnerConfig>>` within the `Config` struct.
+#[derive(Deserialize, Debug, Default)]
+struct InnerConfig {
+    // Defaulted so a config may omit these; otherwise serde requires them.
+    #[serde(default)]
+    options: MainOptions,
+    #[serde(default)]
+    bindings: HashMap<String, OneOrMore>,
+    // Rules apply in ascending name order; the first supplied property wins.
+    windows: Option<BTreeMap<String, WindowParams>>,
+    decorations: Option<decorations::DecorationsOptions>,
+    default_workspaces: Option<u32>,
+    swipe: Option<swipe::SwipeOptions>,
+    padding: Option<padding::PaddingOptions>,
+    restore: Option<RestoreOptions>,
+    #[serde(skip)]
+    binding_warnings: Vec<String>,
+}
+
+impl InnerConfig {
+    /// Creates a new `InnerConfig` by reading and parsing the configuration file from the specified `path`.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A reference to the path of the configuration file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(InnerConfig)` if the configuration is parsed successfully, otherwise `Err(Error)` with an error message.
+    fn new(input: &str) -> Result<InnerConfig> {
+        InnerConfig::parse_config(input)
+    }
+
+    /// Parses the configuration from a string `input`.
+    /// It populates the `code` and `command` fields of `Keybinding` by looking up virtual keys and literal keycodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The string content of the configuration file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(InnerConfig)` if the parsing is successful, otherwise `Err(Error)` with an error message.
+    fn parse_config(input: &str) -> Result<InnerConfig> {
+        let config: InnerConfig = toml::from_str(input)?;
+        config.validate()?;
+        if !config.needs_virtual_keys() {
+            return Ok(config);
+        }
+
+        let virtual_keys = generate_virtual_keymap();
+        Self::parse_config_with_virtual_keys(input, &virtual_keys)
+    }
+
+    fn parse_config_with_virtual_keys(
+        input: &str,
+        virtual_keys: &[(String, u8)],
+    ) -> Result<InnerConfig> {
+        let mut config: InnerConfig = toml::from_str(input)?;
+        config.validate()?;
+
+        for (command, bindings) in &mut config.bindings {
+            let argv = command.split('_').collect::<Vec<_>>();
+            let parsed = match parse_command(&argv) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    let warning = format!("[bindings] {command}: {err}");
+                    warn!("{warning}");
+                    config.binding_warnings.push(warning);
+                    continue;
+                }
+            };
+            for binding in bindings.all_mut() {
+                binding.command = parsed.clone();
+
+                if let Some(code) = keycode_for_key_name(&binding.key, virtual_keys) {
+                    binding.code = code;
+                    binding.valid = true;
+                    info!("bind: {binding:?}");
+                } else {
+                    let warning = format!("[bindings] {command}: invalid key '{}'", binding.key);
+                    warn!("{warning}");
+                    config.binding_warnings.push(warning);
+                }
+            }
+        }
+
+        // Resolve passthrough keybinding strings into (keycode, modifiers) pairs.
+        if let Some(windows) = &mut config.windows {
+            for (name, params) in windows {
+                for input in &params.bindings_passthrough {
+                    let pair = resolve_keybinding_str(input, virtual_keys).map_err(|err| {
+                        Error::InvalidConfig(format!(
+                            "[windows.{name}] bindings_passthrough {input:?}: {err}"
+                        ))
+                    })?;
+                    params.parsed_passthrough.push(pair);
+                }
+            }
+        }
+
+        Ok(config)
+    }
+
+    fn needs_virtual_keys(&self) -> bool {
+        !self.bindings.is_empty()
+            || self.windows.as_ref().is_some_and(|windows| {
+                windows
+                    .values()
+                    .any(|params| !params.bindings_passthrough.is_empty())
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[serde(rename_all = "snake_case")]
+pub enum MissingWindowBehavior {
+    Ignore,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
+pub struct RestoreOptions {
+    pub enabled: Option<bool>,
+    pub startup_grace_ms: Option<u64>,
+    pub missing_windows: Option<MissingWindowBehavior>,
+}
+
+/// `MainOptions` represents the primary configuration options for the window manager.
+/// These options control various behaviors such as mouse focus, gesture recognition, and window animation.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
+pub struct MainOptions {
+    // ChainYourMac flat dialect. Accessors normalize values after decoding.
+    pub gap_inner: Option<f64>,
+    pub gap_outer: Option<f64>,
+    pub dock_aware: Option<bool>,
+    pub center_focused_column: Option<String>,
+    pub keep_window_height: Option<bool>,
+    pub animation: Option<String>,
+    pub animation_duration_ms: Option<f64>,
+    pub animation_damping: Option<f64>,
+    pub focus_border: Option<bool>,
+    pub focus_border_width: Option<f64>,
+    pub focus_border_color: Option<String>,
+    pub focus_border_radius: Option<f64>,
+    pub dim_inactive: Option<bool>,
+    pub dim_inactive_opacity: Option<f64>,
+    pub minimap: Option<bool>,
+    pub strip_indicator_interactive: Option<bool>,
+    pub pin_indicator: Option<bool>,
+    pub pinned_color: Option<String>,
+    pub swipe_natural: Option<bool>,
+    pub swipe_snap: Option<String>,
+    pub drag_reorder: Option<bool>,
+    pub scroll_modifier: Option<String>,
+    pub session_restore: Option<bool>,
+    pub native_tabs: Option<bool>,
+    pub float_dialogs: Option<bool>,
+    pub float_recheck: Option<bool>,
+    pub exit_native_fullscreen: Option<bool>,
+    pub tab_bar_clicks: Option<bool>,
+    pub tab_bar_titles: Option<bool>,
+    pub use_skylight: Option<bool>,
+    pub ignored_displays: Option<Vec<String>>,
+    pub detailed_logging: Option<bool>,
+
+    /// Enables or disables focus follows mouse behavior.
+    pub focus_follows_mouse: Option<bool>,
+    /// Enables or disables mouse follows focus behavior.
+    pub mouse_follows_focus: Option<bool>,
+    /// Warps the mouse to the closest screen when at the edge.
+    pub horizontal_mouse_warp: Option<i16>,
+    /// Vertical pixel offset applied to the warp landing position, signed by
+    /// warp direction. Use to compensate for physical desk arrangement
+    /// differing from the macOS arrangement (e.g. portrait monitor sitting
+    /// higher or lower than the laptop). When warping downward (target below
+    /// source) the offset is added; when warping upward, subtracted.
+    pub horizontal_mouse_warp_offset: Option<i32>,
+    /// A list of preset column widths (as ratios) used for resizing windows.
+    #[serde(default = "default_preset_column_widths")]
+    pub preset_column_widths: Vec<f64>,
+    /// A list of preset heights (as ratios of the viewport) used when resizing
+    /// a window vertically inside a stack.
+    #[serde(default = "default_preset_stack_heights")]
+    pub preset_stack_heights: Vec<f64>,
+    /// Legacy product name for animation duration in milliseconds.
+    pub animation_speed: Option<f64>,
+    /// Automatically center the window when switching focus with keyboard.
+    pub auto_center: Option<bool>,
+    /// Height of off-screen window slivers as a ratio (0.0–1.0) of the display height.
+    /// Lower values hide the window's corner radius at screen edges.
+    /// Default: 1.0 (full height).
+    pub sliver_height: Option<f64>,
+    /// Width of off-screen window slivers in pixels.
+    /// Default: 5 pixels.
+    pub sliver_width: Option<u16>,
+    /// Legacy top-level padding (deprecated; use `[padding]`).
+    pub padding_top: Option<u16>,
+    pub padding_bottom: Option<u16>,
+    pub padding_left: Option<u16>,
+    pub padding_right: Option<u16>,
+    /// Legacy top-level dim options (deprecated; use `[decorations.inactive.dim]`).
+    pub dim_inactive_windows: Option<f32>,
+    pub dim_inactive_color: Option<String>,
+    /// Legacy top-level border options (deprecated; use `[decorations.active.border]`).
+    pub border_active_window: Option<bool>,
+    pub border_color: Option<String>,
+    pub border_opacity: Option<f64>,
+    pub border_width: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "decorations::deserialize_border_radius_option"
+    )]
+    pub border_radius: Option<BorderRadiusOption>,
+    /// Legacy top-level swipe options (deprecated; use `[swipe]`).
+    pub swipe_gesture_fingers: Option<usize>,
+    pub swipe_gesture_direction: Option<SwipeGestureDirection>,
+
+    #[allow(dead_code)]
+    pub continuous_swipe: Option<bool>,
+    pub swipe_sensitivity: Option<f64>,
+    pub swipe_deceleration: Option<f64>,
+    /// The modifier key used for mouse-based window resizing.
+    #[serde(default, deserialize_with = "deserialize_modifier")]
+    #[cfg_attr(test, serde(serialize_with = "serialize_modifier"))]
+    pub mouse_resize_modifier: Option<Modifiers>,
+    /// Override the system menubar height (in pixels).
+    /// When set, this value is used instead of the height reported by macOS.
+    pub menubar_height: Option<u16>,
+    /// How much of a window may be hidden before a focus change forces it into
+    /// view. 0.0 (default) = always bring into view. 1.0 = never move unless
+    /// fully invisible. E.g. 0.5 = tolerate up to 50% hidden.
+    pub window_hidden_ratio: Option<f64>,
+
+    /// Whether grow/shrink cycles back when reaching the end of presets. Applies
+    /// to both the horizontal and the vertical resize commands.
+    /// Default: true (cycles). Set to false to stop at the limits.
+    pub window_resize_cycle: Option<bool>,
+
+    /// If enabled, an empty virtual workspace will be removed.
+    /// Default: true.
+    pub reap_empty_workspaces: Option<bool>,
+
+    /// Disable detection of native macOS tabs. When set, newly-spawned windows are
+    /// never auto-merged into a tab group with an existing same-app sibling.
+    /// Default: false.
+    pub disable_native_tabs: Option<bool>,
+
+    /// Enable animation of virtual workspace swaps.
+    /// Off by default, because people use virtual workspaces due to the slow animation of the
+    /// native macOS workspaces.
+    pub virtual_workspace_animations: Option<bool>,
+
+    /// When moving a window to another virtual workspace, insert it at the column
+    /// matching its current on-screen position (keeping it where you see it,
+    /// shifting the rest) instead of appending it to the end of the strip.
+    /// Off by default.
+    pub insert_windows_mid_strip: Option<bool>,
+
+    /// If a non-enumerated (e.g. South) gesture or window movement would target a nonexistent
+    /// virtual workspace, create the workspace automatically.
+    pub create_virtual_workspace_automatically: Option<bool>,
+}
+
+/// Returns a default set of column widths.
+pub fn default_preset_column_widths() -> Vec<f64> {
+    [
+        0x3fd0_0000_0000_0000,
+        0x3fd5_5547_5a31_a4be,
+        0x3fe0_0000_0000_0000,
+        0x3fe5_555c_52e7_2da1,
+        0x3fe8_0000_0000_0000,
+    ]
+    .into_iter()
+    .map(f64::from_bits)
+    .collect()
+}
+
+/// Returns a default set of stacked window heights. Unlike widths there is no
+/// vertical scrolling, so ratios never exceed the viewport.
+pub fn default_preset_stack_heights() -> Vec<f64> {
+    vec![0.25, 0.33333, 0.50, 0.66667, 0.75]
+}
+
+/// `Keybinding` represents a keyboard shortcut and the command it triggers.
+/// It includes the key, its raw keycode, modifier keys, and the associated command.
+#[derive(Debug)]
+pub struct Keybinding {
+    pub key: String,
+    pub code: u8,
+    pub valid: bool,
+    pub modifiers: Modifiers,
+    pub command: Command,
+}
+
+impl<'de> Deserialize<'de> for Keybinding {
+    /// Deserializes a `Keybinding` from a string input. The input string is expected to be in a format like "`modifier+modifier-key`" or "`key`".
+    /// Examples: "`ctrl+alt-q`", "`shift-tab`", "`h`".
+    ///
+    /// # Arguments
+    ///
+    /// * `deserializer` - The deserializer used to parse the input.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Self)` if the deserialization is successful, otherwise `Err(D::Error)` with a custom error message.
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let input = String::deserialize(deserializer)?;
+        let (key, modifiers) = parse_keybinding_str(&input).map_err(de::Error::custom)?;
+
+        Ok(Keybinding {
+            key: key.to_string(),
+            code: 0,
+            valid: false,
+            modifiers,
+            command: Command::Quit,
+        })
+    }
+}
+
+/// The initial width of a managed window, either fixed or based on the focused window.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum InitialWindowWidth {
+    Ratio(f64),
+    Mode(InitialWindowWidthMode),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InitialWindowWidthMode {
+    ComplementFocused,
+}
+
+impl InitialWindowWidth {
+    pub fn ratio(self, focused_ratio: Option<f64>) -> f64 {
+        match self {
+            Self::Ratio(ratio) => ratio,
+            Self::Mode(InitialWindowWidthMode::ComplementFocused) => {
+                // The first window, or one opened from an almost full-width
+                // window, should occupy the display rather than a tiny sliver.
+                let Some(ratio) = focused_ratio.filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+                else {
+                    return 1.0;
+                };
+                if ratio >= 0.95 { 1.0 } else { 1.0 - ratio }
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn test_initial_window_width_config() {
+    let config = Config::try_from(
+        r#"
+[windows.dynamic]
+title = ".*"
+width = "complement_focused"
+"#,
+    )
+    .expect("dynamic width rule parses");
+    let width = config.find_window_properties("Window 1", "")[0]
+        .width
+        .expect("matched width rule");
+    assert_eq!(width.ratio(Some(0.25)), 0.75);
+    assert_eq!(width.ratio(Some(0.5)), 0.5);
+    assert_eq!(width.ratio(Some(0.95)), 1.0);
+    assert_eq!(width.ratio(Some(1.0)), 1.0);
+    assert_eq!(width.ratio(None), 1.0);
+
+    let config = Config::try_from(
+        r#"
+[windows.fixed]
+title = ".*"
+width = 0.5
+"#,
+    )
+    .expect("fixed width rule still parses");
+    let width = config.find_window_properties("Window 1", "")[0]
+        .width
+        .expect("matched width rule");
+    assert_eq!(width.ratio(Some(0.25)), 0.5);
+}
+
+/// `WindowParams` defines rules and properties for specific windows based on their title or bundle ID.
+/// These parameters can override default window management behavior, such as forcing a window to float or setting its initial index.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WindowParams {
+    /// A regular expression to match against the window's title.
+    #[serde(default = "default_title", deserialize_with = "deserialize_title")]
+    title: Regex,
+    /// An optional bundle identifier to match against the application's bundle ID.
+    bundle_id: Option<String>,
+    /// If `true`, the window will be managed as a floating window (not tiled).
+    pub floating: Option<bool>,
+    /// If `true`, force the process/window to be managed even if macOS reports it as
+    /// unobservable or the window does not look like a standard window.
+    pub manage: Option<bool>,
+    /// An optional preferred index for the window's position in the window strip.
+    pub index: Option<usize>,
+    pub vertical_padding: Option<i32>,
+    pub horizontal_padding: Option<i32>,
+    pub dont_focus: Option<bool>,
+    /// A positive initial width ratio relative to the display width, or
+    /// `"complement_focused"` to fill the width left by the focused window.
+    /// Fixed ratios above 1.0 create an oversized, horizontally scrollable window.
+    /// Overrides the default column width when the window is first managed.
+    pub width: Option<InitialWindowWidth>,
+    /// Grid placement for floating windows: "cols:rows:x:y:w:h".
+    /// Divides the display into a grid and positions the window at the given cell/span.
+    pub grid: Option<String>,
+    /// Per-window override for the active window border corner radius.
+    pub border_radius: Option<f64>,
+    /// Keyboard shortcuts that should be passed through to this app instead of
+    /// being intercepted by paneru. Uses the same `"modifier+modifier-key"`
+    /// format as `[bindings]` (e.g. `"ctrl+alt-h"`).
+    #[serde(default)]
+    bindings_passthrough: Vec<String>,
+    /// Resolved `(keycode, modifiers)` pairs from `bindings_passthrough`.
+    #[serde(skip)]
+    parsed_passthrough: Vec<(u8, Modifiers)>,
+}
+
+impl WindowParams {
+    #![allow(unused)]
+    pub fn new(title: &str, bundle_id: Option<String>) -> Self {
+        Self {
+            title: Regex::new(title).unwrap(),
+            bundle_id,
+            floating: None,
+            manage: None,
+            index: None,
+            vertical_padding: None,
+            horizontal_padding: None,
+            dont_focus: None,
+            width: None,
+            grid: None,
+            border_radius: None,
+            bindings_passthrough: Vec::new(),
+            parsed_passthrough: Vec::new(),
+        }
+    }
+
+    /// Returns the resolved passthrough keybindings for this window rule.
+    pub fn passthrough_keys(&self) -> &[(u8, Modifiers)] {
+        &self.parsed_passthrough
+    }
+
+    /// Parses the grid string into `(x_ratio, y_ratio, w_ratio, h_ratio)`, all 0.0–1.0.
+    pub fn grid_ratios(&self) -> Option<(f64, f64, f64, f64)> {
+        let grid = self.grid.as_ref()?;
+        let parts = grid
+            .split(':')
+            .map(str::parse::<f64>)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .ok()?;
+        let [cols, rows, x, y, width, height] = parts.as_slice() else {
+            return None;
+        };
+        if !parts.iter().all(|value| value.is_finite())
+            || *cols <= 0.0
+            || *rows <= 0.0
+            || *x < 0.0
+            || *y < 0.0
+            || *width <= 0.0
+            || *height <= 0.0
+            || x + width > *cols
+            || y + height > *rows
+        {
+            return None;
+        }
+        Some((
+            parts[2] / cols,
+            parts[3] / rows,
+            parts[4] / cols,
+            parts[5] / rows,
+        ))
+    }
+}
+
+fn default_title() -> Regex {
+    Regex::new(".*").expect("static title regex")
+}
+
+/// Deserializes a regular expression from a string for window titles.
+fn deserialize_title<'de, D>(deserializer: D) -> std::result::Result<Regex, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Regex::new(&s).map_err(de::Error::custom)
+}
+
+fn deserialize_modifier<'de, D>(deserializer: D) -> std::result::Result<Option<Modifiers>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(s) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    parse_modifiers(&s)
+        .map(Some)
+        .map_err(|e: Error| serde::de::Error::custom(e.to_string()))
+}
+
+#[cfg(test)]
+#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+pub(crate) fn serialize_modifier<S: serde::Serializer>(
+    val: &Option<Modifiers>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.serialize_some(&val.as_ref().map(Modifiers::bits))
+}
+
+#[cfg(feature = "lua")]
+pub(crate) fn format_modifiers(modifiers: Modifiers) -> String {
+    let mut rem = modifiers;
+    let mut parts = Vec::new();
+    for (mask, name) in [
+        (Modifiers::ALT, "alt"),
+        (Modifiers::LALT, "lalt"),
+        (Modifiers::RALT, "ralt"),
+        (Modifiers::SHIFT, "shift"),
+        (Modifiers::LSHIFT, "lshift"),
+        (Modifiers::RSHIFT, "rshift"),
+        (Modifiers::CMD, "cmd"),
+        (Modifiers::LCMD, "lcmd"),
+        (Modifiers::RCMD, "rcmd"),
+        (Modifiers::CTRL, "ctrl"),
+        (Modifiers::LCTRL, "lctrl"),
+        (Modifiers::RCTRL, "rctrl"),
+        (Modifiers::FN, "fn"),
+    ] {
+        if rem.contains(mask) {
+            parts.push(name);
+            rem.remove(mask);
+        }
+    }
+    parts.join(" + ")
+}
+
+/// Builds a [`Config`] from the Lua table passed to `paneru.setup{...}`,
+/// reusing the same serde `Deserialize` that parses the TOML file. Keybindings
+/// are not read here — they go through the Lua keybind pipeline via
+/// `paneru.bind` — so any `bindings` field is cleared.
+///
+/// # Errors
+///
+/// Returns an error if `value` is not a table or fails to deserialize.
+#[cfg(feature = "lua")]
+pub(crate) fn config_from_lua(lua: &mlua::Lua, value: mlua::Value) -> mlua::Result<Config> {
+    use mlua::LuaSerdeExt;
+
+    if !value.is_table() {
+        return Err(mlua::Error::RuntimeError(
+            "paneru.setup: expected a table".to_string(),
+        ));
+    }
+
+    let mut inner: InnerConfig = lua.from_value(value)?;
+    inner.bindings.clear();
+    inner
+        .validate()
+        .map_err(|err| mlua::Error::RuntimeError(format!("paneru.setup: {err}")))?;
+
+    // Resolve window passthrough chords into keycodes, mirroring the TOML
+    // second pass. `parsed_passthrough` is `#[serde(skip)]`, so it starts empty.
+    let needs_keys = inner.windows.as_ref().is_some_and(|windows| {
+        windows
+            .values()
+            .any(|params| !params.bindings_passthrough.is_empty())
+    });
+    if needs_keys {
+        // The primed keymap, not a fresh one: this runs on the Lua worker, and
+        // generating it goes through Carbon/TIS. See [`prime_virtual_keymap`].
+        let virtual_keys = virtual_keymap();
+        if let Some(windows) = &mut inner.windows {
+            for (name, params) in windows {
+                for chord in &params.bindings_passthrough {
+                    let pair = resolve_keybinding_str(chord, virtual_keys).map_err(|err| {
+                        mlua::Error::external(format!(
+                            "[windows.{name}] bindings_passthrough {chord:?}: {err}"
+                        ))
+                    })?;
+                    params.parsed_passthrough.push(pair);
+                }
+            }
+        }
+    }
+
+    Ok(Config {
+        inner: Arc::new(ArcSwap::from_pointee(inner)),
+    })
+}
+
+/// Resolves a keybinding chord string like `"ctrl+alt-h"` into a `(keycode, Modifiers)`
+/// pair, generating the layout-aware virtual keymap on demand.
+///
+/// This is the entry point used by the Lua runtime's `paneru.bind`, so scripted
+/// keybinds accept the exact same chord syntax as the TOML `[bindings]` table.
+#[cfg(feature = "lua")]
+pub(crate) fn resolve_chord(input: &str) -> Result<(u8, Modifiers)> {
+    // Fast path: avoids the virtual keymap for common chords, keeping this
+    // testable headlessly.
+    if let Ok(resolved) = resolve_keybinding_str(input, &[]) {
+        return Ok(resolved);
+    }
+    resolve_keybinding_str(input, virtual_keymap())
+}
+
+/// The layout-aware virtual keymap, computed once.
+///
+/// `generate_virtual_keymap` goes through Carbon/TIS, which is main-thread/
+/// GUI-session sensitive, but `paneru.bind` runs on the Lua worker thread. So
+/// the daemon primes this from the main thread at startup; the worker only
+/// ever reads what was left behind.
+#[cfg(feature = "lua")]
+static VIRTUAL_KEYMAP: std::sync::OnceLock<Vec<(String, u8)>> = std::sync::OnceLock::new();
+
+/// Computes the virtual keymap now, on the calling thread. Call once from the
+/// main thread before anything can reach [`resolve_chord`].
+#[cfg(feature = "lua")]
+pub(crate) fn prime_virtual_keymap() {
+    let _ = VIRTUAL_KEYMAP.set(generate_virtual_keymap());
+}
+
+/// The primed keymap. Falls back to computing it in place if priming never
+/// happened (harmless in unit tests, rare elsewhere).
+#[cfg(feature = "lua")]
+fn virtual_keymap() -> &'static [(String, u8)] {
+    VIRTUAL_KEYMAP.get_or_init(generate_virtual_keymap)
+}
+
+/// Splits at one modifier/key separator, preserving a literal `-` key.
+fn parse_keybinding_str(input: &str) -> Result<(&str, Modifiers)> {
+    let input = input.trim();
+    let (key, modifiers) = match input.split_once('-') {
+        Some((mods, key)) if input != "-" => (key.trim(), parse_modifiers(mods)?),
+        _ => (input, Modifiers::empty()),
+    };
+
+    if key.is_empty() {
+        return Err(Error::InvalidConfig("Empty keybinding string".to_string()));
+    }
+    if key != "-" && key.contains('-') {
+        return Err(Error::InvalidConfig(format!(
+            "Too many dashes in keybinding: {input:?}"
+        )));
+    }
+
+    Ok((key, modifiers))
+}
+
+/// Resolves a keybinding string like `"ctrl+alt-h"` into a `(keycode, Modifiers)` pair.
+fn resolve_keybinding_str(input: &str, virtual_keys: &[(String, u8)]) -> Result<(u8, Modifiers)> {
+    let (key, modifiers) = parse_keybinding_str(input)?;
+    let code = keycode_for_key_name(key, virtual_keys).ok_or_else(|| {
+        Error::InvalidConfig(format!("Unknown key '{key}' in keybinding: {input:?}"))
+    })?;
+
+    Ok((code, modifiers))
+}
+
+fn keycode_for_key_name(key: &str, virtual_keys: &[(String, u8)]) -> Option<u8> {
+    let physical_name = match key {
+        "[" => "leftbracket",
+        "]" => "rightbracket",
+        name => name,
+    };
+    virtual_keys
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, c)| *c)
+        .or_else(|| {
+            virtual_keycode()
+                .find(|(k, _)| *k == physical_name)
+                .map(|(_, c)| *c)
+        })
+        .or_else(|| literal_keycode().find(|(k, _)| *k == key).map(|(_, c)| *c))
+}
+
+/// Parses a string containing modifier names (e.g., "alt", "shift", "cmd", "ctrl") separated by "+", and returns their combined bitmask.
+///
+/// # Arguments
+///
+/// * `input` - The string containing modifier names (e.g., "ctrl+alt").
+///
+/// # Returns
+///
+/// `Ok(Modifiers)` with the combined modifier bitmask if parsing is successful, otherwise `Err(String)` with an error message for an invalid modifier.
+fn parse_modifiers(input: &str) -> Result<Modifiers> {
+    let mut out = Modifiers::empty();
+
+    let modifiers = input.split('+').map(str::trim).collect::<Vec<_>>();
+    for modifier in &modifiers {
+        out |= match *modifier {
+            "alt" => Modifiers::ALT,
+            "lalt" => Modifiers::LALT,
+            "ralt" => Modifiers::RALT,
+            "shift" => Modifiers::SHIFT,
+            "lshift" => Modifiers::LSHIFT,
+            "rshift" => Modifiers::RSHIFT,
+            "cmd" => Modifiers::CMD,
+            "lcmd" => Modifiers::LCMD,
+            "rcmd" => Modifiers::RCMD,
+            "ctrl" => Modifiers::CTRL,
+            "lctrl" => Modifiers::LCTRL,
+            "rctrl" => Modifiers::RCTRL,
+            "fn" => Modifiers::FN,
+            _ => {
+                return Err(Error::InvalidConfig(format!(
+                    "{}: Invalid modifier: {modifier}",
+                    function_name!()
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    /// Returns a reference to the currently selected keyboard layout input source that is ASCII-capable.
+    ///
+    /// # Returns
+    ///
+    /// A raw pointer to the `TISInputSourceRef` (a `c_void` pointer) if successful, otherwise `null_mut()`.
+    fn TISCopyCurrentASCIICapableKeyboardLayoutInputSource() -> *mut c_void;
+
+    /// Retrieves a specified property of an input source.
+    ///
+    /// # Arguments
+    ///
+    /// * `keyboard` - The raw pointer to the `TISInputSourceRef`.
+    /// * `property` - The `CFStringRef` representing the property to retrieve (e.g., `kTISPropertyUnicodeKeyLayoutData`).
+    ///
+    /// # Returns
+    ///
+    /// A raw pointer to `CFData` containing the property value.
+    fn TISGetInputSourceProperty(keyboard: *const c_void, property: CFStringRef) -> *mut CFData;
+
+    /// Translates a virtual key code to a Unicode string according to the specified keyboard layout.
+    ///
+    /// # Arguments
+    ///
+    /// * `keyLayoutPtr` - A pointer to the keyboard layout data.
+    /// * `virtualKeyCode` - The virtual key code to translate.
+    /// * `keyAction` - The key action (e.g., `UCKeyAction::Down`).
+    /// * `modifierKeyState` - The state of the modifier keys (e.g., `kUCKeyModifierAlphaLockBit`).
+    /// * `keyboardType` - The type of keyboard, typically obtained from `LMGetKbdType()`.
+    /// * `keyTranslateOptions` - Options for the translation process.
+    /// * `deadKeyState` - A mutable reference to a `u32` representing the dead key state.
+    /// * `maxStringLength` - The maximum length of the output Unicode string buffer.
+    /// * `actualStringLength` - A mutable reference to an `isize` to store the actual length of the output Unicode string.
+    /// * `unicodeString` - A mutable pointer to the buffer to store the resulting Unicode string.
+    ///
+    /// # Returns
+    ///
+    /// An `OSStatus` indicating success or failure.
+    fn UCKeyTranslate(
+        keyLayoutPtr: *mut u8,
+        virtualKeyCode: u16,
+        keyAction: u16,
+        modifierKeyState: u32,
+        keyboardType: u32,
+        keyTranslateOptions: u32,
+        deadKeyState: &mut u32,
+        maxStringLength: usize,
+        actualStringLength: &mut isize,
+        unicodeString: *mut u16,
+    ) -> OSStatus;
+
+    /// Returns the keyboard type for the system.
+    ///
+    /// # Returns
+    ///
+    /// A `u8` representing the keyboard type.
+    fn LMGetKbdType() -> u8;
+
+    /// A constant `CFStringRef` representing the property key for Unicode keyboard layout data.
+    static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+
+}
+
+/// Returns an iterator over static tuples of virtual key names and their corresponding keycodes.
+/// These keycodes identify physical keys on an ANSI-standard US keyboard layout.
+///
+/// # Returns
+///
+/// An iterator yielding references to `(&'static str, u8)` tuples.
+fn virtual_keycode() -> impl Iterator<Item = &'static (&'static str, u8)> {
+    /*
+     *  Summary:
+     *    Virtual keycodes
+     *
+     *  Discussion:
+     *    These constants are the virtual keycodes defined originally in
+     *    Inside Mac Volume V, pg. V-191. They identify physical keys on a
+     *    keyboard. Those constants with "ANSI" in the name are labeled
+     *    according to the key position on an ANSI-standard US keyboard.
+     *    For example, kVK_ANSI_A indicates the virtual keycode for the key
+     *    with the letter 'A' in the US keyboard layout. Other keyboard
+     *    layouts may have the 'A' key label on a different physical key;
+     *    in this case, pressing 'A' will generate a different virtual
+     *    keycode.
+     */
+    static VIRTUAL_KEYCODE: LazyLock<Vec<(&'static str, u8)>> = LazyLock::new(|| {
+        vec![
+            ("a", 0x00),
+            ("s", 0x01),
+            ("d", 0x02),
+            ("f", 0x03),
+            ("h", 0x04),
+            ("g", 0x05),
+            ("z", 0x06),
+            ("x", 0x07),
+            ("c", 0x08),
+            ("v", 0x09),
+            ("section", 0x0a), // iso keyboards only.
+            ("b", 0x0b),
+            ("q", 0x0c),
+            ("w", 0x0d),
+            ("e", 0x0e),
+            ("r", 0x0f),
+            ("y", 0x10),
+            ("t", 0x11),
+            ("1", 0x12),
+            ("2", 0x13),
+            ("3", 0x14),
+            ("4", 0x15),
+            ("6", 0x16),
+            ("5", 0x17),
+            ("equal", 0x18),
+            ("9", 0x19),
+            ("7", 0x1a),
+            ("minus", 0x1b),
+            ("8", 0x1c),
+            ("0", 0x1d),
+            ("rightbracket", 0x1e),
+            ("o", 0x1f),
+            ("u", 0x20),
+            ("leftbracket", 0x21),
+            ("i", 0x22),
+            ("p", 0x23),
+            ("l", 0x25),
+            ("j", 0x26),
+            ("quote", 0x27),
+            ("k", 0x28),
+            ("semicolon", 0x29),
+            ("backslash", 0x2a),
+            ("comma", 0x2b),
+            ("slash", 0x2c),
+            ("n", 0x2d),
+            ("m", 0x2e),
+            ("period", 0x2f),
+            ("grave", 0x32),
+            ("keypaddecimal", 0x41),
+            ("keypadmultiply", 0x43),
+            ("keypadplus", 0x45),
+            ("keypadclear", 0x47),
+            ("keypaddivide", 0x4b),
+            ("keypadenter", 0x4c),
+            ("keypadminus", 0x4e),
+            ("keypadequals", 0x51),
+            ("keypad0", 0x52),
+            ("keypad1", 0x53),
+            ("keypad2", 0x54),
+            ("keypad3", 0x55),
+            ("keypad4", 0x56),
+            ("keypad5", 0x57),
+            ("keypad6", 0x58),
+            ("keypad7", 0x59),
+            ("keypad8", 0x5b),
+            ("keypad9", 0x5c),
+        ]
+    });
+    VIRTUAL_KEYCODE.iter()
+}
+
+/// Returns an iterator over static tuples of literal key names and their corresponding keycodes.
+/// These keycodes are for keys that are independent of the keyboard layout (e.g., Return, Tab, Space).
+///
+/// # Returns
+///
+/// An iterator yielding references to `(&'static str, u8)` tuples.
+fn literal_keycode() -> impl Iterator<Item = &'static (&'static str, u8)> {
+    /* keycodes for keys that are independent of keyboard layout*/
+    static LITERAL_KEYCODE: LazyLock<Vec<(&'static str, u8)>> = LazyLock::new(|| {
+        vec![
+            ("return", 0x24),
+            ("tab", 0x30),
+            ("space", 0x31),
+            ("delete", 0x33),
+            ("escape", 0x35),
+            ("command", 0x37),
+            ("shift", 0x38),
+            ("capslock", 0x39),
+            ("option", 0x3a),
+            ("control", 0x3b),
+            ("rightcommand", 0x36),
+            ("rightshift", 0x3c),
+            ("rightoption", 0x3d),
+            ("rightcontrol", 0x3e),
+            ("function", 0x3f),
+            ("f17", 0x40),
+            ("volumeup", 0x48),
+            ("volumedown", 0x49),
+            ("mute", 0x4a),
+            ("f18", 0x4f),
+            ("f19", 0x50),
+            ("f20", 0x5a),
+            ("f5", 0x60),
+            ("f6", 0x61),
+            ("f7", 0x62),
+            ("f3", 0x63),
+            ("f8", 0x64),
+            ("f9", 0x65),
+            ("f11", 0x67),
+            ("f13", 0x69),
+            ("f16", 0x6a),
+            ("f14", 0x6b),
+            ("f10", 0x6d),
+            ("contextualmenu", 0x6e),
+            ("f12", 0x6f),
+            ("f15", 0x71),
+            ("help", 0x72),
+            ("home", 0x73),
+            ("pageup", 0x74),
+            ("forwarddelete", 0x75),
+            ("f4", 0x76),
+            ("end", 0x77),
+            ("f2", 0x78),
+            ("pagedown", 0x79),
+            ("f1", 0x7a),
+            ("leftarrow", 0x7b),
+            ("rightarrow", 0x7c),
+            ("downarrow", 0x7d),
+            ("uparrow", 0x7e),
+        ]
+    });
+    LITERAL_KEYCODE.iter()
+}
+
+/// Represents the action of a key, used in `UCKeyTranslate`.
+enum UCKeyAction {
+    /// The key is going down.
+    Down = 0, // key is going down
+              /*
+              Up = 1,      // key is going up
+              AutoKey = 2, // auto-key down
+              Display = 3, // get information for key display (as in Key Caps)
+              */
+}
+
+/// Generates a vector of (`key_name`, keycode) tuples for virtual keys based on the current ASCII-capable keyboard layout.
+/// This involves using macOS Carbon API functions to translate virtual keycodes to Unicode characters.
+///
+/// # Returns
+///
+/// A `Vec<(String, u8)>` containing the translated key names and their keycodes. Returns an empty vector if an error occurs during keyboard layout fetching.
+fn generate_virtual_keymap() -> Vec<(String, u8)> {
+    #[cfg(feature = "lua")]
+    if let Some(keymap) = VIRTUAL_KEYMAP.get() {
+        return keymap.clone();
+    }
+    // Config defaults are also read by the Lua worker and Rust test workers.
+    // Carbon/TIS must stay on the main thread; physical-name/literal lookup
+    // remains available without it, and Lua uses the primed cache above.
+    if objc2::MainThreadMarker::new().is_none() {
+        return Vec::new();
+    }
+    let keyboard = AXUIWrapper::from_retained(unsafe {
+        TISCopyCurrentASCIICapableKeyboardLayoutInputSource()
+    })
+    .ok();
+    let keyboard_layout = keyboard
+        .and_then(|keyboard| {
+            NonNull::new(unsafe {
+                TISGetInputSourceProperty(
+                    keyboard.as_ptr::<c_void>(),
+                    kTISPropertyUnicodeKeyLayoutData,
+                )
+            })
+        })
+        .and_then(|uchr| NonNull::new(unsafe { CFData::byte_ptr(uchr.as_ref()).cast_mut() }));
+    let Some(keyboard_layout) = keyboard_layout else {
+        error!(
+            "{}: problem fetching current virtual keyboard layout.",
+            function_name!()
+        );
+        return vec![];
+    };
+
+    let mut state = 0u32;
+    let mut chars = vec![0u16; 256];
+    let mut got: isize = 0;
+    virtual_keycode()
+        .filter_map(|(_, keycode)| {
+            unsafe {
+                UCKeyTranslate(
+                    keyboard_layout.as_ptr(),
+                    (*keycode).into(),
+                    UCKeyAction::Down as u16,
+                    0,
+                    LMGetKbdType().into(),
+                    1,
+                    &mut state,
+                    chars.len(),
+                    &mut got,
+                    chars.as_mut_ptr(),
+                )
+            }
+            .to_result(function_name!())
+            .ok()
+            .map(|()| {
+                let name = unsafe { CFString::with_characters(None, chars.as_ptr(), got) }
+                    .map(|chars| chars.to_string());
+                name.zip(Some(*keycode))
+            })
+        })
+        .flatten()
+        .collect()
+}
+
+#[cfg(test)]
+fn test_virtual_keymap() -> Vec<(String, u8)> {
+    virtual_keycode()
+        .map(|(key, code)| ((*key).to_string(), *code))
+        .collect()
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+#[allow(clippy::too_many_lines)]
+fn test_config_parsing() {
+    let input = r#"
+[options]
+focus_follows_mouse = true
+
+[bindings]
+quit = "ctrl+alt-q"
+window_manage = "ctrl+alt-t"
+window_stack = ["ctrl-s", "alt-s"]
+window_shrink = "alt-d"
+window_snap = "fn-x"
+
+[windows]
+
+[windows.pip]
+title = "picture.*picture"
+bundle_id = "com.something.apple"
+floating = true
+index = 1
+"#;
+    let virtual_keys = test_virtual_keymap();
+    let config = Config {
+        inner: Arc::new(ArcSwap::from_pointee(
+            InnerConfig::parse_config_with_virtual_keys(input, &virtual_keys)
+                .expect("Failed to parse config"),
+        )),
+    };
+    let find_key = |k| {
+        virtual_keycode()
+            .find_map(|(s, v)| (format!("{k}") == *s).then_some(*v))
+            .unwrap()
+    };
+
+    assert_eq!(config.inner().options.focus_follows_mouse, Some(true));
+
+    // Modifiers: alt = 1<<0, ctrl = 1<<3.
+    let keycode = find_key('q');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::ALT | Modifiers::CTRL),
+        Some(Command::Quit)
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::LALT | Modifiers::LCTRL),
+        Some(Command::Quit)
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::RALT | Modifiers::RCTRL),
+        Some(Command::Quit)
+    ));
+
+    let keycode = find_key('t');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::ALT | Modifiers::CTRL),
+        Some(Command::Window(Operation::Manage))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::LALT | Modifiers::LCTRL),
+        Some(Command::Window(Operation::Manage))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::RALT | Modifiers::RCTRL),
+        Some(Command::Window(Operation::Manage))
+    ));
+
+    let keycode = find_key('s');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::CTRL),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::LCTRL),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::RCTRL),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::ALT),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::LALT),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::RALT),
+        Some(Command::Window(Operation::Stack(true)))
+    ));
+
+    let keycode = find_key('d');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::ALT),
+        Some(Command::Window(Operation::Resize(ResizeDirection::Shrink)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::LALT),
+        Some(Command::Window(Operation::Resize(ResizeDirection::Shrink)))
+    ));
+
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::RALT),
+        Some(Command::Window(Operation::Resize(ResizeDirection::Shrink)))
+    ));
+
+    let props = config.find_window_properties("picture in picture", "com.something.apple");
+    assert_eq!(props[0].floating, Some(true));
+    assert_eq!(props[0].index, Some(1));
+
+    let keycode = find_key('x');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::FN),
+        Some(Command::Window(Operation::Snap))
+    ));
+
+    let defaults = Config::default();
+    assert_eq!(defaults.swipe_sensitivity(), 1.6);
+    assert_eq!(defaults.swipe_deceleration(), 4.0);
+}
+
+#[test]
+fn test_config_parsing_absolute_virtual_workspace_bindings() {
+    let input = r#"
+[options]
+
+[bindings]
+window_virtualnum_3 = "cmd + alt - 3"
+window_virtualsendnum_3 = "cmd + alt + shift - 3"
+"#;
+    let virtual_keys = test_virtual_keymap();
+    let config = Config {
+        inner: Arc::new(ArcSwap::from_pointee(
+            InnerConfig::parse_config_with_virtual_keys(input, &virtual_keys)
+                .expect("Failed to parse config"),
+        )),
+    };
+    let find_key = |k| {
+        virtual_keycode()
+            .find_map(|(s, v)| (format!("{k}") == *s).then_some(*v))
+            .unwrap()
+    };
+    let keycode = find_key('3');
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::CMD | Modifiers::ALT),
+        Some(Command::Window(Operation::VirtualNumber(2)))
+    ));
+    assert!(matches!(
+        config.find_keybind(keycode, Modifiers::CMD | Modifiers::ALT | Modifiers::SHIFT),
+        Some(Command::Window(Operation::VirtualMoveNumber(
+            2,
+            MoveFocus::Stay
+        )))
+    ));
+}
+
+#[test]
+fn test_parse_resize_commands() {
+    assert!(matches!(
+        parse_command(&["window", "resize"]).unwrap(),
+        Command::Window(Operation::Resize(ResizeDirection::Grow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "grow"]).unwrap(),
+        Command::Window(Operation::Resize(ResizeDirection::Grow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "resize", "shrink"]).unwrap(),
+        Command::Window(Operation::Resize(ResizeDirection::Shrink))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "shrink"]).unwrap(),
+        Command::Window(Operation::Resize(ResizeDirection::Shrink))
+    ));
+}
+
+#[test]
+fn test_parse_vertical_resize_commands() {
+    assert!(matches!(
+        parse_command(&["window", "vertical"]).unwrap(),
+        Command::Window(Operation::ResizeVertical(ResizeDirection::Grow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "vertical", "resize"]).unwrap(),
+        Command::Window(Operation::ResizeVertical(ResizeDirection::Grow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "vertical", "grow"]).unwrap(),
+        Command::Window(Operation::ResizeVertical(ResizeDirection::Grow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "vertical", "shrink"]).unwrap(),
+        Command::Window(Operation::ResizeVertical(ResizeDirection::Shrink))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "vertical", "resize", "shrink"]).unwrap(),
+        Command::Window(Operation::ResizeVertical(ResizeDirection::Shrink))
+    ));
+    assert!(parse_command(&["window", "vertical", "wider"]).is_err());
+}
+
+#[test]
+fn test_parse_restart_command() {
+    assert!(parse_command(&["restart"]).is_err());
+}
+
+#[test]
+fn test_parse_absolute_virtual_workspace_commands() {
+    assert!(matches!(
+        parse_command(&["window", "virtualnum", "3"]).unwrap(),
+        Command::Window(Operation::VirtualNumber(2))
+    ));
+    assert!(parse_command(&["workspace", "virtual", "3"]).is_err());
+    assert!(matches!(
+        parse_command(&["window", "virtualmove", "3"]).unwrap(),
+        Command::Window(Operation::VirtualMoveNumber(2, MoveFocus::Follow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "virtualsend", "3"]).unwrap(),
+        Command::Window(Operation::VirtualMoveNumber(2, MoveFocus::Stay))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "virtualmovenum", "3"]).unwrap(),
+        Command::Window(Operation::VirtualMoveNumber(2, MoveFocus::Follow))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "virtualsendnum", "3"]).unwrap(),
+        Command::Window(Operation::VirtualMoveNumber(2, MoveFocus::Stay))
+    ));
+    assert!(matches!(
+        parse_command(&["window", "virtualadd"]).unwrap(),
+        Command::Window(Operation::VirtualAdd)
+    ));
+}
+
+#[test]
+fn test_default_workspaces() {
+    let base = "[options]\n[bindings]\n";
+    let config = Config::try_from(base).unwrap();
+    assert_eq!(config.default_workspaces(), 1);
+
+    let config = Config::try_from(&*format!("default_workspaces = 4\n{base}")).unwrap();
+    assert_eq!(config.default_workspaces(), 4);
+
+    // Zero is clamped up to 1 (the physical space always exists).
+    let config = Config::try_from(&*format!("default_workspaces = 0\n{base}")).unwrap();
+    assert_eq!(config.default_workspaces(), 1);
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn test_grid_ratios() {
+    use regex::Regex;
+
+    let make = |grid: Option<&str>| WindowParams {
+        title: Regex::new(".*").unwrap(),
+        bundle_id: None,
+        floating: None,
+        manage: None,
+        index: None,
+        vertical_padding: None,
+        horizontal_padding: None,
+        dont_focus: None,
+        width: None,
+        grid: grid.map(Into::into),
+        border_radius: None,
+        bindings_passthrough: vec![],
+        parsed_passthrough: vec![],
+    };
+
+    // Standard 2x2 grid, cell (1,1), span 1x1 → bottom-right quarter.
+    assert_eq!(
+        make(Some("2:2:1:1:1:1")).grid_ratios(),
+        Some((0.5, 0.5, 0.5, 0.5))
+    );
+
+    // 3x3 grid, cell (0,0), span 2x1 → top-left, 2/3 width, 1/3 height.
+    assert_eq!(
+        make(Some("3:3:0:0:2:1")).grid_ratios(),
+        Some((0.0, 0.0, 2.0 / 3.0, 1.0 / 3.0))
+    );
+
+    // Full screen: 1x1 grid, cell (0,0), span 1x1.
+    assert_eq!(
+        make(Some("1:1:0:0:1:1")).grid_ratios(),
+        Some((0.0, 0.0, 1.0, 1.0))
+    );
+
+    // Invalid: too few parts.
+    assert_eq!(make(Some("2:2:1:1")).grid_ratios(), None);
+
+    // Invalid: zero columns.
+    assert_eq!(make(Some("0:2:0:0:1:1")).grid_ratios(), None);
+
+    // No grid set.
+    assert_eq!(make(None).grid_ratios(), None);
+}
+
+#[test]
+fn test_parse_hex_color_valid() {
+    assert_eq!(
+        parse_hex_color("#89b4fa"),
+        (
+            f64::from(0x89) / 255.0,
+            f64::from(0xb4) / 255.0,
+            f64::from(0xfa) / 255.0
+        )
+    );
+    assert_eq!(parse_hex_color("#000000"), (0.0, 0.0, 0.0));
+    assert_eq!(parse_hex_color("#FFFFFF"), (1.0, 1.0, 1.0));
+    assert_eq!(parse_hex_color("#FF0000"), (1.0, 0.0, 0.0));
+}
+
+#[test]
+fn test_parse_hex_color_no_hash() {
+    assert_eq!(
+        parse_hex_color("89b4fa"),
+        (
+            f64::from(0x89) / 255.0,
+            f64::from(0xb4) / 255.0,
+            f64::from(0xfa) / 255.0
+        )
+    );
+    assert_eq!(parse_hex_color("FF0000"), (1.0, 0.0, 0.0));
+}
+
+#[test]
+fn test_parse_hex_color_invalid_length() {
+    // Short strings fall back to white.
+    assert_eq!(parse_hex_color("#FFF"), (1.0, 1.0, 1.0));
+    assert_eq!(parse_hex_color(""), (1.0, 1.0, 1.0));
+    assert_eq!(parse_hex_color("#FF"), (1.0, 1.0, 1.0));
+}
+
+#[test]
+fn test_parse_hex_color_malformed_hex() {
+    // Non-hex digits fall back to 255 per channel.
+    assert_eq!(parse_hex_color("ZZZZZZ"), (1.0, 1.0, 1.0));
+    assert_eq!(parse_hex_color("GG0000"), (1.0, 0.0, 0.0));
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn test_config_defaults() {
+    let config = Config::default();
+    assert_eq!(config.dim_inactive_opacity(), 0.0);
+    assert_eq!(config.dim_inactive_color(), (0.0, 0.0, 0.0));
+    assert!(!config.border_active_window());
+    assert_eq!(
+        config.border_color(),
+        (247.0 / 255.0, 160.0 / 255.0, 40.0 / 255.0)
+    );
+    assert_eq!(config.border_opacity(), 1.0);
+    assert_eq!(config.border_width(), 2.0);
+    assert_eq!(config.border_radius(), BorderRadiusOption::Value(10.0));
+    assert_eq!(config.menubar_height(), None);
+}
+
+#[test]
+fn test_first_launch_uses_defaults_without_creating_or_overwriting_config() {
+    let unique = format!(
+        "paneru-first-launch-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let directory = std::env::temp_dir().join(unique);
+    let path = directory.join("paneru.toml");
+
+    let config = Config::load(Some(&path)).expect("missing config should use defaults");
+    assert!(!directory.exists());
+    assert!(!config.inner().bindings.is_empty());
+    assert_eq!(config.inner().binding_warnings, Vec::<String>::new());
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let custom = "[options]\nauto_center = false\n\n[bindings]\n";
+    std::fs::write(&path, custom).unwrap();
+    Config::load(Some(&path)).expect("existing configuration should load");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), custom);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn defaults_config_matches_the_shipped_product_config() {
+    let shipped = InnerConfig::new(DEFAULT_CONFIGURATION).expect("the shipped config should parse");
+    let defaults = Config::defaults().expect("defaults should always build");
+    assert_eq!(
+        serde_json::to_value(&shipped.options).unwrap(),
+        serde_json::to_value(defaults.options()).unwrap(),
+        "a missing TOML should use the full shipped product config"
+    );
+    // Bindings now exist; compare in command order rather than HashMap order.
+    let bindings = |config: &InnerConfig| {
+        config
+            .bindings
+            .iter()
+            .map(|(command, bindings)| (command.clone(), format!("{bindings:?}")))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    assert_eq!(bindings(&shipped), bindings(&defaults.inner()));
+}
+
+#[test]
+fn test_window_rules_manage() {
+    let input = r#"
+[options]
+
+[bindings]
+
+[windows.btt_main]
+bundle_id = "com.hegenberg.BetterTouchTool"
+title = "BetterTouchTool"
+manage = true
+
+[windows.btt_floating]
+bundle_id = "com.hegenberg.BetterTouchTool"
+title = "Screenshot.*"
+floating = true
+"#;
+    let config = Config::try_from(input).expect("config should parse");
+
+    // Main window should match the manage rule.
+    let props = config.find_window_properties("BetterTouchTool", "com.hegenberg.BetterTouchTool");
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0].manage, Some(true));
+
+    // Screenshot window matches the floating rule.
+    let props = config.find_window_properties("Screenshot 1", "com.hegenberg.BetterTouchTool");
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0].floating, Some(true));
+}
+
+#[test]
+fn test_restore_config_defaults() {
+    let config = Config::try_from("[options]\n\n[bindings]\n").expect("config should parse");
+
+    assert!(config.restore_enabled());
+    assert_eq!(config.restore_startup_grace(), Duration::from_secs(2));
+    assert_eq!(
+        config.restore_missing_windows(),
+        MissingWindowBehavior::Ignore
+    );
+}
+
+#[test]
+fn test_restore_config_explicit_values() {
+    let config = Config::try_from(
+        r#"
+[options]
+
+[restore]
+enabled = false
+startup_grace_ms = 750
+missing_windows = "ignore"
+
+[bindings]
+"#,
+    )
+    .expect("config should parse");
+
+    assert!(!config.restore_enabled());
+    assert_eq!(config.restore_startup_grace(), Duration::from_millis(750));
+    assert_eq!(
+        config.restore_missing_windows(),
+        MissingWindowBehavior::Ignore
+    );
+}
+
+#[test]
+fn test_restore_config_rejects_unsupported_missing_window_policy() {
+    let err = Config::try_from(
+        r#"
+[options]
+
+[restore]
+missing_windows = "reserve"
+
+[bindings]
+"#,
+    )
+    .expect_err("unsupported restore missing-window policy should fail");
+
+    assert!(err.to_string().contains("unknown variant"));
+}
+
+#[test]
+fn test_static_virtual_key_names_can_be_bound() {
+    let config = Config::try_from(
+        r#"
+[options]
+
+[bindings]
+window_grow = "alt - minus"
+"#,
+    )
+    .unwrap();
+    let minus_keycode = virtual_keycode()
+        .find_map(|(key, code)| (*key == "minus").then_some(*code))
+        .unwrap();
+
+    assert!(matches!(
+        config.find_keybind(minus_keycode, Modifiers::ALT),
+        Some(Command::Window(Operation::Resize(ResizeDirection::Grow)))
+    ));
+}
+
+#[cfg(all(test, feature = "lua"))]
+mod lua_setup_tests {
+    use super::*;
+    use mlua::Lua;
+
+    /// Runs a `paneru.setup`-style table (as a Lua chunk that returns it) through
+    /// the same `config_from_lua` path `paneru.setup` uses.
+    fn config_from_source(source: &str) -> Config {
+        let lua = Lua::new();
+        let value: mlua::Value = lua.load(source).eval().expect("lua chunk should evaluate");
+        config_from_lua(&lua, value).expect("config_from_lua should succeed")
+    }
+
+    #[test]
+    fn setup_table_populates_accessors() {
+        let config = config_from_source(
+            r"return {
+                default_workspaces = 3,
+                options = {
+                    sliver_width = 9,
+                    focus_follows_mouse = false,
+                    preset_stack_heights = { 0.3, 0.7 },
+                },
+                padding = { top = 10, bottom = 4 },
+            }",
+        );
+        assert_eq!(config.default_workspaces(), 3);
+        assert_eq!(config.sliver_width(), 9);
+        assert!(!config.focus_follows_mouse());
+        assert_eq!(config.preset_stack_heights(), vec![0.3, 0.7]);
+        let (top, _right, bottom, _left) = config.edge_padding();
+        assert_eq!((top, bottom), (10, 4));
+    }
+
+    #[test]
+    fn missing_options_and_bindings_are_ok() {
+        // Regression guard for the `#[serde(default)]` fix: a table that omits
+        // `options` and `bindings` must still deserialize.
+        let config = config_from_source(r"return { padding = { top = 4 } }");
+        assert_eq!(config.default_workspaces(), 1);
+        assert_eq!(config.edge_padding().0, 4);
+    }
+
+    #[test]
+    fn window_rule_passthrough_is_resolved() {
+        let config = config_from_source(
+            r#"return {
+                windows = { term = { title = "kitty", bindings_passthrough = { "ctrl+alt-h" } } },
+            }"#,
+        );
+        let rules = config.find_window_properties("kitty", "");
+        assert_eq!(rules.len(), 1);
+        assert!(
+            !rules[0].passthrough_keys().is_empty(),
+            "passthrough chords should resolve to keycodes"
+        );
+    }
+
+    #[test]
+    fn non_table_argument_is_rejected() {
+        let lua = Lua::new();
+        assert!(config_from_lua(&lua, mlua::Value::Integer(3)).is_err());
+    }
+}

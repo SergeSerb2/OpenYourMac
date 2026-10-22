@@ -1,0 +1,404 @@
+use bevy::{
+    ecs::{
+        entity::Entity,
+        hierarchy::ChildOf,
+        query::{With, Without},
+        system::{Commands, Query, Res, ResMut, Single, SystemParam},
+        world::Mut,
+    },
+    math::IRect,
+};
+use objc2_core_graphics::CGDirectDisplayID;
+use tracing::warn;
+
+use super::{ActiveDisplayMarker, FocusFollowsMouse, SkipReshuffle};
+use crate::{
+    config::Config,
+    ecs::{
+        ActiveWorkspaceMarker, Bounds, DockPosition, FlashMessage, FocusedMarker, FullWidthMarker,
+        Initializing, LayoutPosition, NativeFullscreenMarker, Position, RepositionMarker,
+        ResizeMarker, Scrolling, Unmanaged, WidthRatio, layout::LayoutStrip,
+    },
+    manager::{Application, Display, Origin, Size, Window},
+    platform::{ProcessSerialNumber, WinID},
+};
+
+/// A Bevy `SystemParam` that provides access to the application's configuration and related state.
+/// It allows systems to query various configuration options and modify flags like `FocusFollowsMouse` or `SkipReshuffle`.
+#[derive(SystemParam)]
+pub struct GlobalState<'w> {
+    /// Resource to manage the window ID for focus-follows-mouse behavior.
+    focus_follows_mouse_id: ResMut<'w, FocusFollowsMouse>,
+    /// Resource to determine if window reshuffling should be skipped.
+    skip_reshuffle: ResMut<'w, SkipReshuffle>,
+
+    initializing: Option<Res<'w, Initializing>>,
+}
+
+impl GlobalState<'_> {
+    /// Returns the `WinID` of the window currently marked for focus-follows-mouse.
+    ///
+    /// # Returns
+    ///
+    /// An `Option<WinID>` if a window is marked, otherwise `None`.
+    pub fn ffm_flag(&self) -> Option<WinID> {
+        self.focus_follows_mouse_id.0
+    }
+
+    /// Sets the `WinID` for the focus-follows-mouse flag.
+    ///
+    /// # Arguments
+    ///
+    /// * `flag` - An `Option<WinID>` to set as the focus-follows-mouse target.
+    pub fn set_ffm_flag(&mut self, flag: Option<WinID>) {
+        self.focus_follows_mouse_id.as_mut().0 = flag;
+    }
+
+    /// Sets the `skip_reshuffle` flag.
+    /// When `true`, window reshuffling logic will be temporarily bypassed.
+    ///
+    /// # Arguments
+    ///
+    /// * `to` - A boolean value to set the `skip_reshuffle` flag to.
+    pub fn set_skip_reshuffle(&mut self, to: bool) {
+        self.skip_reshuffle.as_mut().0 = to;
+    }
+
+    /// Returns `true` if window reshuffling should be skipped.
+    ///
+    /// # Returns
+    ///
+    /// `true` if reshuffling is skipped, `false` otherwise.
+    pub fn skip_reshuffle(&self) -> bool {
+        self.skip_reshuffle.0
+    }
+
+    pub fn initializing(&self) -> bool {
+        self.initializing.is_some()
+    }
+}
+
+/// A Bevy `SystemParam` that provides immutable access to the currently active `Display` and other displays.
+/// It ensures that only one display is marked as active at any given time.
+#[derive(SystemParam)]
+pub struct ActiveDisplay<'w, 's> {
+    strip: Single<
+        'w,
+        's,
+        (
+            &'static LayoutStrip,
+            Entity,
+            Option<&'static NativeFullscreenMarker>,
+        ),
+        With<ActiveWorkspaceMarker>,
+    >,
+    /// The single active `Display` component, marked with `ActiveDisplayMarker`.
+    display: Single<
+        'w,
+        's,
+        (&'static Display, Entity, Option<&'static DockPosition>),
+        With<ActiveDisplayMarker>,
+    >,
+    /// A query for all other `Display` components that are not marked as active.
+    other_displays: Query<'w, 's, &'static Display, Without<ActiveDisplayMarker>>,
+}
+
+impl ActiveDisplay<'_, '_> {
+    /// Returns an immutable reference to the active `Display`.
+    pub fn display(&self) -> &Display {
+        self.display.0
+    }
+
+    /// Returns the `CGDirectDisplayID` of the active display.
+    pub fn id(&self) -> CGDirectDisplayID {
+        self.display.0.id()
+    }
+
+    pub fn entity(&self) -> Entity {
+        self.display.1
+    }
+
+    /// Returns an iterator over immutable references to all other displays (non-active).
+    pub fn other(&self) -> impl Iterator<Item = &Display> {
+        self.other_displays.iter()
+    }
+
+    pub fn active_strip(&self) -> &LayoutStrip {
+        self.strip.0
+    }
+
+    pub fn active_strip_entity(&self) -> Entity {
+        self.strip.1
+    }
+
+    pub fn fullscreen(&self) -> Option<&NativeFullscreenMarker> {
+        self.strip.2
+    }
+
+    /// Returns the `IRect` representing the bounds of the active display.
+    pub fn bounds(&self) -> IRect {
+        self.display.0.bounds()
+    }
+
+    pub fn dock(&self) -> Option<&DockPosition> {
+        self.display.2
+    }
+
+    /// Returns the `IRect` representing the bounds of the active display, correctly padded by
+    /// potential dock position and or padding configuration.
+    pub fn actual_bounds(&self, config: &Config) -> IRect {
+        self.display().actual_display_bounds(self.dock(), config)
+    }
+}
+
+/// A Bevy `SystemParam` that provides mutable access to the currently active `Display` and other displays.
+/// It allows systems to modify the active display and its associated `LayoutStrip`s.
+#[derive(SystemParam)]
+pub struct ActiveDisplayMut<'w, 's> {
+    strip: Single<'w, 's, &'static mut LayoutStrip, With<ActiveWorkspaceMarker>>,
+    /// The single active `Display` component, marked with `ActiveDisplayMarker`.
+    display: Single<
+        'w,
+        's,
+        (&'static mut Display, Entity, Option<&'static DockPosition>),
+        With<ActiveDisplayMarker>,
+    >,
+    /// A query for all other `Display` components that are not marked as active.
+    other_displays: Query<'w, 's, &'static mut Display, Without<ActiveDisplayMarker>>,
+}
+
+impl ActiveDisplayMut<'_, '_> {
+    pub fn display(&self) -> &Display {
+        &self.display.0
+    }
+
+    pub fn dock(&self) -> Option<&DockPosition> {
+        self.display.2
+    }
+
+    /// Returns an iterator over mutable references to all other displays (non-active).
+    pub fn other(&mut self) -> impl Iterator<Item = Mut<'_, Display>> {
+        self.other_displays.iter_mut()
+    }
+
+    pub fn active_strip(&mut self) -> &mut LayoutStrip {
+        &mut self.strip
+    }
+
+    /// Returns the `CGRect` representing the bounds of the active display.
+    pub fn bounds(&self) -> IRect {
+        self.display().bounds()
+    }
+
+    /// Returns the `IRect` representing the bounds of the active display, correctly padded by
+    /// potential dock position and or padding configuration.
+    pub fn actual_bounds(&self, config: &Config) -> IRect {
+        self.display().actual_display_bounds(self.dock(), config)
+    }
+}
+
+/// Markers indicating something on screen is still animating; used by the
+/// event pump to decide how long it may sleep.
+#[derive(SystemParam)]
+pub struct FrameActivity<'w, 's> {
+    repositioning: Query<'w, 's, (), With<RepositionMarker>>,
+    resizing: Query<'w, 's, (), With<ResizeMarker>>,
+    scrolling: Query<'w, 's, (), (With<Scrolling>, With<ActiveWorkspaceMarker>)>,
+    flash_messages: Query<'w, 's, (), With<FlashMessage>>,
+    visuals: Option<Res<'w, super::oym_visual::Visibility>>,
+}
+
+impl FrameActivity<'_, '_> {
+    /// Returns `true` while any window is being moved, resized or scrolled, or
+    /// a flash message is on screen — i.e. while frames still need drawing.
+    pub fn mid_frame(&self) -> bool {
+        !self.repositioning.is_empty()
+            || !self.resizing.is_empty()
+            || !self.scrolling.is_empty()
+            || !self.flash_messages.is_empty()
+            || self
+                .visuals
+                .as_ref()
+                .is_some_and(|visuals| visuals.fading())
+    }
+}
+
+/// Bundles the window queries, config, and a command buffer that most
+/// window-handling systems need. Only add this to a system that already used
+/// all three: granting extra world access can cause a query-conflict panic.
+#[derive(SystemParam)]
+pub struct WindowCtx<'w, 's> {
+    pub windows: Windows<'w, 's>,
+    pub config: Res<'w, Config>,
+    pub commands: Commands<'w, 's>,
+}
+
+/// A window's layout slot, current frame, width ratio, and any in-flight
+/// reposition/resize markers.
+type WindowPlacements<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LayoutPosition,
+        &'static Position,
+        &'static Bounds,
+        &'static WidthRatio,
+        Option<&'static RepositionMarker>,
+        Option<&'static ResizeMarker>,
+    ),
+    With<Window>,
+>;
+
+#[derive(SystemParam)]
+pub struct Windows<'w, 's> {
+    all: Query<
+        'w,
+        's,
+        (
+            &'static Window,
+            Entity,
+            &'static ChildOf,
+            Option<&'static Unmanaged>,
+        ),
+    >,
+    focus: Query<'w, 's, (&'static Window, Entity), With<FocusedMarker>>,
+    previous_size: Query<
+        'w,
+        's,
+        (
+            &'static Window,
+            Entity,
+            &'static WidthRatio,
+            &'static FullWidthMarker,
+        ),
+        With<FullWidthMarker>,
+    >,
+    positions: WindowPlacements<'w, 's>,
+    kept_heights: Query<'w, 's, &'static super::oym_layout::KeptHeight>,
+}
+
+impl Windows<'_, '_> {
+    fn get_all(&self, entity: Entity) -> Option<(&Window, Entity, &ChildOf, Option<&Unmanaged>)> {
+        self.all
+            .get(entity)
+            .inspect_err(|err| warn!("unable to find window: {err}"))
+            .ok()
+    }
+
+    pub fn get_managed(&self, entity: Entity) -> Option<(&Window, Entity, Option<&Unmanaged>)> {
+        self.get_all(entity)
+            .map(|(window, entity, _, unmanaged)| (window, entity, unmanaged))
+    }
+
+    pub fn get(&self, entity: Entity) -> Option<&Window> {
+        self.get_all(entity).map(|(window, _, _, _)| window)
+    }
+
+    pub fn find(&self, window_id: WinID) -> Option<(&Window, Entity)> {
+        self.all
+            .into_iter()
+            .find(|(window, _, _, _)| window.id() == window_id)
+            .map(|(window, entity, _, _)| (window, entity))
+    }
+
+    pub fn find_parent(&self, window_id: WinID) -> Option<(&Window, Entity, Entity)> {
+        self.all.iter().find_map(|(window, entity, childof, _)| {
+            (window.id() == window_id).then_some((window, entity, childof.parent()))
+        })
+    }
+
+    pub fn find_managed(&self, window_id: WinID) -> Option<(&Window, Entity)> {
+        self.all.iter().find_map(|(window, entity, _, unmanaged)| {
+            (unmanaged.is_none() && window.id() == window_id).then_some((window, entity))
+        })
+    }
+
+    pub fn focused(&self) -> Option<(&Window, Entity)> {
+        self.focus.single().ok()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Window, Entity)> {
+        self.all
+            .iter()
+            .map(|(window, entity, _, _)| (window, entity))
+    }
+
+    pub fn managed_iter(&self) -> impl Iterator<Item = (&Window, Entity, &ChildOf)> {
+        self.all
+            .iter()
+            .filter_map(|(window, entity, childof, unmanaged)| {
+                unmanaged.is_none().then_some((window, entity, childof))
+            })
+    }
+
+    pub fn kept_height(&self, entity: Entity) -> Option<i32> {
+        self.kept_heights.get(entity).ok().map(|height| height.0)
+    }
+
+    pub fn full_width(&self, entity: Entity) -> Option<&FullWidthMarker> {
+        self.previous_size
+            .get(entity)
+            .map(|(_, _, _, marker)| marker)
+            .ok()
+    }
+
+    pub fn psn(&self, window_id: WinID, apps: &Query<&Application>) -> Option<ProcessSerialNumber> {
+        self.find_parent(window_id)
+            .and_then(|(_, _, parent)| apps.get(parent).ok())
+            .map(|app| app.psn())
+    }
+
+    pub fn origin(&self, entity: Entity) -> Option<Origin> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(_, origin, _, _, _, _)| origin.0)
+    }
+
+    pub fn size(&self, entity: Entity) -> Option<Size> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(_, _, size, _, _, _)| size.0)
+    }
+
+    pub fn width_ratio(&self, entity: Entity) -> Option<f64> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(_, _, _, ratio, _, _)| ratio.0)
+    }
+
+    pub fn frame(&self, entity: Entity) -> Option<IRect> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(_, origin, size, _, _, _)| IRect::from_corners(origin.0, origin.0 + size.0))
+    }
+
+    pub fn moving_frame(&self, entity: Entity) -> Option<IRect> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(_, origin, size, _, reposition, resize)| {
+                let size = size.0;
+                let mut frame = IRect::from_corners(origin.0, origin.0 + size);
+
+                if let Some(reposition) = reposition {
+                    frame.min = reposition.0;
+                    frame.max = frame.min + size;
+                }
+                if let Some(resize) = resize {
+                    frame.max = frame.min + resize.0;
+                }
+                frame
+            })
+    }
+
+    pub fn layout_position(&self, entity: Entity) -> Option<&LayoutPosition> {
+        self.positions
+            .get(entity)
+            .ok()
+            .map(|(layout_position, _, _, _, _, _)| layout_position)
+    }
+}

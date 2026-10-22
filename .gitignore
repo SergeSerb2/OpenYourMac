@@ -1,0 +1,29 @@
+build/
+engine/target/
+app/.build/
+.DS_Store
+
+# Local signing credentials and temporary keychains.
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.keychain
+*.keychain-db
+*.keychain-db-*
+.env*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
+
+# Per-user IDE and agent state.
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+.codex/
+.claude/
+__pycache__/
+*.pyc

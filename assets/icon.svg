@@ -1,4 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#c026d3"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">O</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#8EA2FF"/>
+      <stop offset="0.48" stop-color="#5C79F5"/>
+      <stop offset="1" stop-color="#2D2A9E"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="focused" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6EAFF"/>
+    </linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.30"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="186" ry="186"/>
+    </clipPath>
+    <filter id="lift" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#14105A" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle background -->
+  <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="url(#sheen)"/>
+
+  <g clip-path="url(#tile)">
+    <!-- Neighbouring windows sliding off both edges of the screen -->
+    <rect x="18" y="318" width="262" height="356" rx="40" fill="url(#side)"/>
+    <rect x="744" y="318" width="262" height="356" rx="40" fill="url(#side)"/>
+
+    <!-- Focused window -->
+    <g filter="url(#lift)">
+      <rect x="318" y="270" width="388" height="452" rx="50" fill="url(#focused)"/>
+    </g>
+    <rect x="318" y="270" width="388" height="86" rx="50" fill="#5C79F5" fill-opacity="0.14"/>
+    <rect x="318" y="320" width="388" height="36" fill="#5C79F5" fill-opacity="0.14"/>
+    <circle cx="368" cy="313" r="13" fill="#5C79F5" fill-opacity="0.55"/>
+    <circle cx="408" cy="313" r="13" fill="#5C79F5" fill-opacity="0.35"/>
+    <circle cx="448" cy="313" r="13" fill="#5C79F5" fill-opacity="0.22"/>
+  </g>
+
+  <!-- Strip indicator: the visible part of the strip is highlighted -->
+  <rect x="372" y="782" width="280" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.16"/>
+  <rect x="396" y="797" width="44" height="14" rx="7" fill="#FFFFFF" fill-opacity="0.45"/>
+  <rect x="452" y="797" width="120" height="14" rx="7" fill="#FFFFFF"/>
+  <rect x="584" y="797" width="44" height="14" rx="7" fill="#FFFFFF" fill-opacity="0.45"/>
 </svg>

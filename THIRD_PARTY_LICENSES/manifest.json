@@ -1,0 +1,303 @@
+{
+  "accessibility-sys@0.2.0": {
+    "files": [
+      {
+        "path": "accessibility-63a4a9c4-LICENSE-MIT",
+        "sha256": "d1c601ed68df4536b2edf7b9934a2c4a205b3515411b1a4e212abe91c5cee212",
+        "source": "https://raw.githubusercontent.com/eiz/accessibility/63a4a9c4ecdc143bed1d65b989aa18bbc5fd8129/LICENSE-MIT"
+      }
+    ],
+    "license": "MIT / Apache-2.0",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "63a4a9c4ecdc143bed1d65b989aa18bbc5fd8129"
+  },
+  "block2@0.6.2": {
+    "files": [
+      {
+        "path": "objc2-b4167b58-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "b4167b582b2f75f9a1be75495c41b765344fd03c"
+  },
+  "dispatch2@0.3.1": {
+    "files": [
+      {
+        "path": "objc2-8852b424-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "8852b424193ca41602281b3d7540d7c8ed51e49a"
+  },
+  "launchctl@0.3.2": {
+    "files": [
+      {
+        "path": "launchctl-0.3.2-Cargo.toml",
+        "sha256": "0eb4b16ab2261077a4dd0385edf69a32c10a70ca749f0dc2ee90b5cf947bffca",
+        "source": "https://github.com/sylvanfranklin/launchctl/blob/d487242e3c1ff891d140b0ac31e36bd9f1c1b317/Cargo.toml"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard terms of the MIT license declared in Cargo.toml."
+      }
+    ],
+    "license": "MIT",
+    "note": "Neither the published crate nor its upstream revision has a license file or a copyright notice. Preserve the original MIT declaration and author (Sylvan Franklin); the standard MIT permission text follows. No copyright year or upstream notice has been invented.",
+    "revision": "d487242e3c1ff891d140b0ac31e36bd9f1c1b317"
+  },
+  "objc2-app-kit@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-cloud-kit@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-data@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-foundation@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-graphics@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-image@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-text@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-video@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-encode@4.1.0": {
+    "files": [
+      {
+        "path": "objc2-8d214f54-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "8d214f5477365ffcbcbb7de058c86ed9a518efb7"
+  },
+  "objc2-exception-helper@0.1.1": {
+    "files": [
+      {
+        "path": "objc2-8d214f54-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "8d214f5477365ffcbcbb7de058c86ed9a518efb7"
+  },
+  "objc2-foundation@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-metal@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-quartz-core@0.3.2": {
+    "files": [
+      {
+        "path": "objc2-7b1abfd7-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "Zlib OR Apache-2.0 OR MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2@0.6.4": {
+    "files": [
+      {
+        "path": "objc2-8852b424-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md"
+      },
+      {
+        "path": "MIT-terms.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+        "source": "Standard MIT terms; upstream declares MIT but supplies no separate permission text."
+      }
+    ],
+    "license": "MIT",
+    "note": "The published crate omits its license file. The upstream license notice is retained from the crate VCS revision.",
+    "revision": "8852b424193ca41602281b3d7540d7c8ed51e49a"
+  }
+}

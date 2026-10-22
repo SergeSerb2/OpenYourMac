@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible OpenYourMac problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read the README troubleshooting steps first. Report security issues privately through SECURITY.md.
+        Remove private window titles, file paths, and secrets from logs and images.
+  - type: input
+    id: version
+    attributes:
+      label: OpenYourMac version or source commit
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac architecture
+      placeholder: "macOS version; Apple silicon or Intel"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - GitHub Release
+        - Source build
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the affected apps, commands, and relevant config. Say if another window manager is running.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and other evidence
+      description: Review ~/Library/Logs/OpenYourMac/engine.log for private data before sharing. Include Accessibility and Mac Setup status.
