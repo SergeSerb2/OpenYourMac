@@ -5,10 +5,14 @@ repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bundle="${1:-$repo_root/build/OpenYourMac.app}"
 resources="$bundle/Contents/Resources"
 version="$(cat "$repo_root/VERSION")"
+build_number="${BUILD_NUMBER:-$(cat "$repo_root/BUILD_NUMBER")}"
+[[ "$build_number" =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_NUMBER must be a positive integer without leading zeroes.' >&2; exit 1; }
 codesign --verify --deep --strict --verbose=2 "$bundle"
 plutil -lint "$bundle/Contents/Info.plist"
 actual="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist")"
 [[ "$actual" == "$version" ]] || { echo 'App version does not match VERSION' >&2; exit 1; }
+actual_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$bundle/Contents/Info.plist")"
+[[ "$actual_build" == "$build_number" ]] || { echo 'App build number does not match BUILD_NUMBER' >&2; exit 1; }
 for binary in "$bundle/Contents/MacOS/OpenYourMac" "$resources/OpenYourMacEngine"; do
   [[ "$(lipo -archs "$binary")" == arm64 ]] || { echo "Expected arm64 binary: $binary" >&2; exit 1; }
 done
