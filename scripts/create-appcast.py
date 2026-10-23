@@ -58,7 +58,7 @@ def create(archive, output):
     ET.SubElement(channel, "description").text = "Signed OpenYourMac releases for Apple silicon."
     item = ET.SubElement(channel, "item")
     ET.SubElement(item, "title").text = f"OpenYourMac {version}"
-    ET.SubElement(item, "link").text = f"{repository_url}/releases/tag/v{version}"
+    ET.SubElement(item, "link").text = repository_url
     ET.SubElement(item, "pubDate").text = format_datetime(datetime.now(timezone.utc), usegmt=True)
     ET.SubElement(item, f"{{{SPARKLE}}}version").text = build
     ET.SubElement(item, f"{{{SPARKLE}}}shortVersionString").text = version
