@@ -35,22 +35,26 @@ struct ConfigurationGeneralSection: View {
                 SettingToggleRow(
                     title: "Automatically Check for Updates",
                     subtitle: lastChecked,
-                    isOn: $preferences.automaticallyCheckForUpdates
+                    isOn: $updates.automaticallyChecksForUpdates
                 )
-                Button("Check for Updates…") { updates.checkNow(userInitiated: true) }
+                CardDivider()
+                SettingToggleRow(
+                    title: "Automatically Download and Install Updates",
+                    subtitle: "Download signed updates in the background and install them when the app quits",
+                    isOn: $updates.automaticallyDownloadsUpdates
+                )
+                .disabled(!updates.automaticallyChecksForUpdates)
+                Button("Check for Updates…") { updates.checkForUpdates() }
                     .buttonStyle(SecondaryButtonStyle())
-                    .disabled(updates.isChecking)
-                    .opacity(updates.isChecking ? 0.45 : 1)
+                    .disabled(!updates.canCheckForUpdates)
+                    .opacity(updates.canCheckForUpdates ? 1 : 0.45)
                     .padding(.bottom, 10)
             }
-        }
-        .onChange(of: preferences.automaticallyCheckForUpdates) { enabled in
-            if enabled { updates.startAutomaticChecks() }
         }
     }
 
     private var lastChecked: String {
-        guard let date = preferences.lastUpdateCheck else { return "Never checked" }
+        guard let date = updates.lastUpdateCheck else { return "Never checked" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return "Last checked \(formatter.localizedString(for: date, relativeTo: Date()))"

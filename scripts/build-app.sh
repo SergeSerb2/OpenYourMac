@@ -146,6 +146,11 @@ staged_bundle="$work_dir/OpenYourMac.app"
 contents="$staged_bundle/Contents"
 resources="$contents/Resources"
 mkdir -p "$contents/MacOS" "$resources"
+sparkle_root="$repo_root/app/.build/artifacts/sparkle/Sparkle"
+sparkle_framework="$sparkle_root/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+[[ -d "$sparkle_framework" ]] || fail 'The resolved Sparkle framework is missing.'
+mkdir -p "$contents/Frameworks"
+ditto "$sparkle_framework" "$contents/Frameworks/Sparkle.framework"
 cp "$app_binary" "$contents/MacOS/OpenYourMac"
 cp "$engine_binary" "$resources/OpenYourMacEngine"
 sed -e "s/__VERSION__/$version/g" -e "s/__BUILD__/$build_number/g" \
@@ -161,13 +166,7 @@ chmod +x "$contents/MacOS/OpenYourMac" "$resources/OpenYourMacEngine" "$resource
 find "$resources/raycast" -type f -name 'openyourmac-*.sh' -exec chmod +x {} +
 plutil -lint "$contents/Info.plist"
 
-identity="${CODESIGN_IDENTITY:--}"
-timestamp_args=(--timestamp=none)
-if [[ "$identity" != - ]]; then timestamp_args=(--timestamp); fi
-codesign --force --sign "$identity" --identifier com.openyourmac.OpenYourMac.engine \
-  --options runtime "${timestamp_args[@]}" "$resources/OpenYourMacEngine"
-codesign --force --sign "$identity" --options runtime "${timestamp_args[@]}" "$staged_bundle"
-codesign --verify --deep --strict "$staged_bundle"
+"$repo_root/scripts/sign-bundle.sh" "$staged_bundle"
 
 bundle="$output_dir/OpenYourMac.app"
 rm -rf "$bundle"

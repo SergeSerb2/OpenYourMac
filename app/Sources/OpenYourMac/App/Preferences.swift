@@ -7,8 +7,6 @@ final class Preferences: ObservableObject {
         static let startEngineAutomatically = "startEngineAutomatically"
         static let showWindowOnLaunch = "showWindowOnLaunch"
         static let showInDock = "showInDock"
-        static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
-        static let lastUpdateCheck = "lastUpdateCheck"
         static let onboardingCompleted = "onboardingCompleted"
         static let macSetupIntroduced = "macSetupIntroduced"
         static let gettingStartedDismissed = "gettingStartedDismissed"
@@ -22,8 +20,6 @@ final class Preferences: ObservableObject {
     @Published var startEngineAutomatically: Bool { didSet { set(startEngineAutomatically, forKey: Key.startEngineAutomatically) } }
     @Published var showWindowOnLaunch: Bool { didSet { set(showWindowOnLaunch, forKey: Key.showWindowOnLaunch) } }
     @Published var showInDock: Bool { didSet { set(showInDock, forKey: Key.showInDock) } }
-    @Published var automaticallyCheckForUpdates: Bool { didSet { set(automaticallyCheckForUpdates, forKey: Key.automaticallyCheckForUpdates) } }
-    @Published var lastUpdateCheck: Date? { didSet { set(lastUpdateCheck, forKey: Key.lastUpdateCheck) } }
     @Published var onboardingCompleted: Bool { didSet { set(onboardingCompleted, forKey: Key.onboardingCompleted) } }
     @Published var macSetupIntroduced: Bool { didSet { set(macSetupIntroduced, forKey: Key.macSetupIntroduced) } }
     @Published var gettingStartedDismissed: Bool { didSet { set(gettingStartedDismissed, forKey: Key.gettingStartedDismissed) } }
@@ -41,7 +37,6 @@ final class Preferences: ObservableObject {
             Key.startEngineAutomatically: true,
             Key.showWindowOnLaunch: true,
             Key.showInDock: true,
-            Key.automaticallyCheckForUpdates: true,
             Key.onboardingCompleted: false,
             Key.macSetupIntroduced: false,
             Key.gettingStartedDismissed: false,
@@ -53,8 +48,6 @@ final class Preferences: ObservableObject {
         startEngineAutomatically = flag(Key.startEngineAutomatically)
         showWindowOnLaunch = flag(Key.showWindowOnLaunch)
         showInDock = flag(Key.showInDock)
-        automaticallyCheckForUpdates = flag(Key.automaticallyCheckForUpdates)
-        lastUpdateCheck = defaults?.object(forKey: Key.lastUpdateCheck) as? Date
         onboardingCompleted = flag(Key.onboardingCompleted)
         macSetupIntroduced = flag(Key.macSetupIntroduced)
         gettingStartedDismissed = flag(Key.gettingStartedDismissed)

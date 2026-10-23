@@ -18,6 +18,39 @@ for binary in "$bundle/Contents/MacOS/OpenYourMac" "$resources/OpenYourMacEngine
 done
 cmp "$repo_root/THIRD_PARTY_NOTICES.md" "$resources/THIRD_PARTY_NOTICES.md"
 cmp "$repo_root/LICENSE" "$resources/LICENSE.txt"
+python3 - "$bundle" "$repo_root" <<'PY'
+from pathlib import Path
+import base64
+import plistlib
+import subprocess
+import sys
+
+bundle, root = map(Path, sys.argv[1:])
+with (bundle / "Contents/Info.plist").open("rb") as source:
+    info = plistlib.load(source)
+with (root / "app/Info.plist").open("rb") as source:
+    expected = plistlib.load(source)
+for key in ("SUFeedURL", "SUPublicEDKey", "SUVerifyUpdateBeforeExtraction", "SURequireSignedFeed"):
+    if info.get(key) != expected[key]:
+        sys.exit(f"Unexpected Sparkle configuration: {key}")
+if len(base64.b64decode(info["SUPublicEDKey"], validate=True)) != 32:
+    sys.exit("Invalid Sparkle public key")
+framework = bundle / "Contents/Frameworks/Sparkle.framework"
+for path in (framework / "Sparkle", framework / "Autoupdate",
+             framework / "Updater.app/Contents/MacOS/Updater",
+             framework / "XPCServices/Downloader.xpc/Contents/MacOS/Downloader",
+             framework / "XPCServices/Installer.xpc/Contents/MacOS/Installer"):
+    if not path.is_file():
+        sys.exit(f"Missing Sparkle code: {path.name}")
+    if "arm64" not in subprocess.check_output(["lipo", "-archs", str(path)], text=True).split():
+        sys.exit(f"Missing Sparkle arm64 slice: {path.name}")
+binary = str(bundle / "Contents/MacOS/OpenYourMac")
+if "@rpath/Sparkle.framework/Versions/B/Sparkle" not in subprocess.check_output(["otool", "-L", binary], text=True):
+    sys.exit("App is not linked to Sparkle")
+if "@executable_path/../Frameworks" not in subprocess.check_output(["otool", "-l", binary], text=True):
+    sys.exit("Missing bundled-framework runtime search path")
+print("Sparkle configuration, linkage, and helpers verified.")
+PY
 scratch_home="$(mktemp -d)"
 trap 'rm -rf "$scratch_home"' EXIT
 python3 - "$resources/OpenYourMacEngine" "$version" <<'PY'

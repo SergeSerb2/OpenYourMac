@@ -119,7 +119,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        add("Check for Updates…", to: menu, action: #selector(checkUpdates), enabled: !state.updates.isChecking)
+        add("Check for Updates…", to: menu, action: #selector(checkUpdates), enabled: state.updates.canCheckForUpdates)
         add("Quit \(AppPaths.appName)", to: menu, action: #selector(quit), key: "q")
     }
 
@@ -200,7 +200,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func loginSettings() { state.loginItem.openSettings() }
 
-    @objc private func checkUpdates() { state.updates.checkNow(userInitiated: true) }
+    @objc private func checkUpdates() { state.updates.checkForUpdates() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 

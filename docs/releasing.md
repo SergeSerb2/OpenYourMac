@@ -66,12 +66,14 @@ Files go in `build/release/`:
   `.sha256` file.
 - `OpenYourMac-<version>-macos-arm64-adhoc.zip` (or `-notarized.zip`).
 - The ZIP's `.sha256`, `.build-info.txt`, and `.release-notes.md` files.
+- `appcast.xml`, a signed Sparkle feed pointing to that build's ZIP on Cloudflare.
 
 The DMG contains `OpenYourMac.app` and an `Applications` link for drag
 installation. The ZIP contains the same app. The app holds both binaries, the
 CLI, default config, Raycast scripts, and license notices. Build information records the commit,
 full commit count, target, toolchain and SDK versions, and `engine/Cargo.lock`
-SHA-256. Release builds use the committed `BUILD_NUMBER` as the app build number.
+SHA-256 and `app/Package.resolved` SHA-256. Release builds use the committed
+`BUILD_NUMBER` as the app build number.
 They do not claim byte-for-byte reproducibility. Intel and universal releases
 are not produced by this script.
 
@@ -97,8 +99,69 @@ keeps ad-hoc signing. With both set, it signs the engine and app with hardened
 runtime and timestamps, submits to Apple, requires `Accepted`, and staples the
 ticket. It checks the ticket and Gatekeeper before and after ZIP extraction.
 It also signs, notarizes, and staples the DMG, then checks the app inside it.
-A signing or notarization failure stops the release. Credentials stay in the
-local keychain; no repository signing credentials are needed.
+A signing or notarization failure stops the release. Sparkle's framework and
+nested helpers are signed with the same identity before the app. Credentials
+stay in the local keychain; no repository signing credentials are needed.
+
+## Sparkle update signing
+
+The app embeds Sparkle 2.10.0 through SwiftPM. `scripts/build-app.sh` copies its
+framework and helpers into the bundle and signs them from the inside out.
+`make ci` checks the packaged framework, helpers, linkage, and update settings
+before and after ZIP extraction. Ordinary app builds do not need a private key.
+Ad-hoc builds use `app/AdHoc.entitlements` to load their separately signed Sparkle
+framework without a Team ID. Developer ID builds keep library validation enabled.
+
+Release creation requires the matching Ed25519 private key in the login Keychain,
+under Sparkle account `com.openyourmac.OpenYourMac`. The public key is committed
+as `SUPublicEDKey` in `app/Info.plist`. Keep a secure backup of the private key.
+On a new release Mac, import that backup with Sparkle's `generate_keys --account
+com.openyourmac.OpenYourMac -f <private-key-file>`. The tool is in
+`app/.build/artifacts/sparkle/Sparkle/bin/` after package resolution. Never commit
+or publish the private key. Do not generate a replacement for an existing release
+key; installed apps would reject its signatures. See [Sparkle's signing guide](https://sparkle-project.org/documentation/#eddsa-ed25519-signatures).
+
+After the final ZIP is built, `scripts/create-appcast.py` checks its metadata and
+the Keychain public key, signs and verifies the ZIP, then signs and verifies
+`appcast.xml`. This also applies to ad-hoc releases; Apple signing and Sparkle
+update signing serve separate purposes. A missing or mismatched key stops the
+release. The feed uses `BUILD_NUMBER` to order updates and limits them to Apple
+silicon and the bundle's minimum macOS version.
+
+The app loads `https://openyourmac-updates.sergeserbinenko.com/appcast.xml`.
+Downloads and the signed feed use the dedicated Cloudflare R2 bucket
+`openyourmac-releases`. The domain is attached directly to the bucket with
+minimum TLS 1.2. The ZIP URL includes its build number and SHA-256, so a new
+archive cannot overwrite an older download. Older installed apps need one
+manual update to begin using Sparkle.
+
+## Deploy updates to Cloudflare
+
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in your local release
+environment. The token needs R2 object read/write access to `openyourmac-releases`.
+The uploader uses Node.js and the pinned Wrangler CLI through `npx`; it does not
+store credentials in the repository. The bucket and custom domain must already
+exist in that account. To set up another account, create the dedicated bucket and
+attach the domain with `wrangler r2 bucket domain add` as described in
+[Cloudflare's R2 guide](https://developers.cloudflare.com/r2/reference/wrangler-commands/).
+
+```sh
+scripts/release.sh --deploy-updates
+```
+
+This builds and verifies local release artifacts, signs the ZIP and feed, uploads
+the ZIP, DMG, and checksums, then reads each public download back and checks its
+SHA-256. Only after those checks pass does it replace `appcast.xml`. The feed uses
+`Cache-Control: no-store, max-age=0`; immutable downloads cache for one year.
+The uploader verifies the public feed's bytes and signature and refuses to
+replace a live feed with an equal or lower build number. Run only one release
+deployment at a time. A failed asset upload leaves the previous feed in place.
+Keep all referenced downloads available. Do not edit signed files after upload.
+Use `--skip-ci` only after local CI passed for the committed source.
+
+This flag publishes updates through Cloudflare without making a Git tag or
+GitHub Release. `--publish` remains a separate opt-in for a draft GitHub Release.
+Attaching files to a GitHub draft alone does not change the live Sparkle feed.
 
 ## Create a draft GitHub Release
 
@@ -112,7 +175,8 @@ The script builds and verifies artifacts first. It then creates an annotated
 `v<version>` tag at the release commit, pushes only that tag to `origin`, and
 runs `gh release create ... --draft`. An existing tag must point to the same
 commit. It never pushes branches or other tags. Review the draft and its files
-on GitHub before publishing it.
+on GitHub before publishing it. Include `appcast.xml` and its matching ZIP;
+editing either after signing invalidates the update.
 
 ## Download and first launch
 

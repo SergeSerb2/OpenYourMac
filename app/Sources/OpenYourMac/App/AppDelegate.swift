@@ -55,9 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !launchedQuietly {
             introduceMacSetupIfNeeded()
         }
-        if state.preferences.automaticallyCheckForUpdates {
-            state.updates.startAutomaticChecks()
-        }
+        state.updates.start()
     }
 
     /// Handles a normal SIGTERM through the same bounded quit path as ⌘Q.

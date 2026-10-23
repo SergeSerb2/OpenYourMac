@@ -6,7 +6,13 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-10-23
+
+### Added
+
+- Sparkle updates with signed downloads, installation, and relaunch.
+- Optional automatic download and installation when the app quits.
+- A signed update feed and release downloads hosted on Cloudflare R2.
 
 ### Fixed
 
