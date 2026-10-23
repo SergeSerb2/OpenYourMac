@@ -208,9 +208,13 @@ warning even when validation succeeds.
 **Help › System Information**. Detailed logging includes window titles. Review
 logs for private data before sharing them and turn detailed logging off afterward.
 
-**How do updates work?** The app checks GitHub Releases when automatic checks are
-on, at most once a day. It opens the release page for a newer version. Download
-and replace the app yourself; it does not install updates.
+**How do updates work?** Sparkle checks for updates once a day when automatic
+checks are on. Use **Check for Updates…** in Configuration or the menu bar to
+check now. Sparkle verifies signed updates, installs them, and relaunches the app.
+In Configuration, you can also enable automatic downloads and installation when
+the app quits. Existing automatic-check opt-outs are preserved. Update feeds and
+downloads come from the [Cloudflare feed](https://openyourmac-updates.sergeserbinenko.com/appcast.xml).
+Releases made before Sparkle was added need one manual download to begin using it.
 
 **Do I need a license key?** No. OpenYourMac is MIT-licensed open-source software.
 

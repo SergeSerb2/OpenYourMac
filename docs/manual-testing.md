@@ -192,6 +192,16 @@ window before the command runs.
 - [ ] Check login registration, first launch from a downloaded DMG, Accessibility
   repair after a rebuild, and the [uninstall steps](../README.md#uninstall).
   Check updates against an actual release when one exists.
+- [ ] **Sparkle updates (isolated account or VM only).** Install a previous
+  Sparkle-enabled build in Applications and use **Check for Updates…** from both
+  Configuration and the menu bar. Confirm the signed newer build downloads,
+  installs, and relaunches; confirm the engine stops on quit and starts once after
+  relaunch. Repeat with automatic download/install on and off. Check that a
+  disabled automatic-check setting survives restart and migration from the old
+  checker. Check an up-to-date build and a failed/offline feed. With a local test
+  feed and disposable builds, alter a signed ZIP and a signed feed and confirm
+  Sparkle rejects both. Do not change the production feed or signing key for this
+  check. Record the old/new build numbers and the feed used.
 
 Record pass, fail, or not run for each relevant item. Include privacy-reviewed
 logs from `~/Library/Logs/OpenYourMac/engine.log` and the exact config used.

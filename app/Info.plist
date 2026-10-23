@@ -47,5 +47,19 @@
     </array>
     <key>OYMUpdateRepository</key>
     <string>SergeSerb2/OpenYourMac</string>
+    <key>SUFeedURL</key>
+    <string>https://openyourmac-updates.sergeserbinenko.com/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>EEB77fOigCCAuf4VAOr5GwBNxVclIZ3O6LHCaW7Y7QQ=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
 </dict>
 </plist>

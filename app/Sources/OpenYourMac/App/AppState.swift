@@ -64,7 +64,6 @@ final class AppState: ObservableObject {
         engine.configure(config: config, preferences: preferences, permissions: permissions)
         displays.configure(config: config)
         setup.configure(config: config)
-        updates.configure(preferences: preferences)
         $isMainWindowVisible
             .removeDuplicates()
             .sink { [weak self] visible in

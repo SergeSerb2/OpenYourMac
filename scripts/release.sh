@@ -5,13 +5,15 @@ set -euo pipefail
 repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 skip_ci=false
 publish=false
+deploy_updates=false
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/release.sh [--skip-ci] [--publish]
+Usage: scripts/release.sh [--skip-ci] [--deploy-updates] [--publish]
 
 By default, run local CI and write artifacts to build/release without making a tag.
   --skip-ci   Use only after local CI passed for this commit
+  --deploy-updates  Upload verified artifacts and the signed feed to Cloudflare R2
   --publish   Create/push only v<VERSION> and create a draft GitHub release with gh
   -h, --help  Show this help
 
@@ -39,6 +41,7 @@ PY
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-ci) skip_ci=true ;;
+    --deploy-updates) deploy_updates=true ;;
     --publish) publish=true ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown option: $1. Use --help for usage." ;;
@@ -89,10 +92,7 @@ if [[ "$skip_ci" == false ]]; then scripts/ci.sh; fi
 CODESIGN_IDENTITY=- scripts/build-app.sh
 bundle="$repo_root/build/OpenYourMac.app"
 if [[ "$signing_kind" == notarized ]]; then
-  codesign --force --sign "$CODESIGN_IDENTITY" --options runtime --timestamp \
-    --identifier com.openyourmac.OpenYourMac.engine "$bundle/Contents/Resources/OpenYourMacEngine"
-  codesign --force --sign "$CODESIGN_IDENTITY" --options runtime --timestamp "$bundle"
-  codesign --verify --deep --strict "$bundle"
+  scripts/sign-bundle.sh "$bundle"
   ditto -c -k --sequesterRsrc --keepParent "$bundle" "$scratch/submission.zip"
   notarize "$scratch/submission.zip"
   xcrun stapler staple "$bundle"
@@ -154,13 +154,18 @@ mounted=''
   printf 'macOS SDK version: %s\n' "$sdk_version"
   printf 'macOS SDK build: %s\n' "$sdk_build"
   shasum -a 256 engine/Cargo.lock
+  shasum -a 256 app/Package.resolved
 } > "$archive.build-info.txt"
 notes="$archive.release-notes.md"
 notes_kind=ad-hoc
 if [[ "$signing_kind" == notarized ]]; then notes_kind=notarized; fi
 python3 scripts/release-notes.py --version "$version" --signing-kind "$notes_kind" --output "$notes"
+python3 scripts/create-appcast.py "$archive" --output build/release/appcast.xml
+if [[ "$deploy_updates" == true ]]; then
+  python3 scripts/deploy-updates.py "$archive" --appcast build/release/appcast.xml --dmg "$dmg"
+fi
 
-gh_command=(gh release create "$tag" "$dmg" "$dmg.sha256" "$archive" "$archive.sha256" "$archive.build-info.txt" "$notes"
+gh_command=(gh release create "$tag" "$dmg" "$dmg.sha256" "$archive" "$archive.sha256" "$archive.build-info.txt" "$notes" build/release/appcast.xml
   --draft --verify-tag --title "OpenYourMac $version" --notes-file "$notes")
 if [[ "$publish" == true ]]; then
   [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail 'Worktree changed during the build; refusing to publish.'
