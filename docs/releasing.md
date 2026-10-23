@@ -11,6 +11,10 @@ source and downloads. It does not run build or release jobs.
 2. Set the three-part product version in `VERSION`. In `CHANGELOG.md`, add one
    nonempty `## [<version>] - YYYY-MM-DD` section with a valid release date.
    An `Unreleased`, missing, empty, or duplicate version section fails.
+   For each new distributed build, increase the integer in `BUILD_NUMBER` above
+   every previous build.
+   Keep it increasing across version changes and Git history changes. The initial
+   value of 51 follows the builds distributed before the public repository.
 3. If dependencies changed, regenerate notices and review them:
 
    ```sh
@@ -67,13 +71,14 @@ The DMG contains `OpenYourMac.app` and an `Applications` link for drag
 installation. The ZIP contains the same app. The app holds both binaries, the
 CLI, default config, Raycast scripts, and license notices. Build information records the commit,
 full commit count, target, toolchain and SDK versions, and `engine/Cargo.lock`
-SHA-256. Release builds use the commit count as the app build number. They do
-not claim byte-for-byte reproducibility. Intel and universal releases are not
-produced by this script.
+SHA-256. Release builds use the committed `BUILD_NUMBER` as the app build number.
+They do not claim byte-for-byte reproducibility. Intel and universal releases
+are not produced by this script.
 
-For a separate source-archive build with no Git history, use
-`BUILD_NUMBER=<published-build-number> scripts/build-app.sh`. This override
-does not remove the full-history requirement for `scripts/release.sh`.
+Source archives include `BUILD_NUMBER`, so `scripts/build-app.sh` does not need
+Git history. For a local build, the `BUILD_NUMBER` environment variable can
+override that file. Use the same override with `scripts/verify-bundle.sh`.
+`scripts/release.sh` always uses the committed file and still requires full history.
 
 ## Optional Developer ID signing
 

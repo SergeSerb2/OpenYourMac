@@ -53,7 +53,8 @@ version="$(cat VERSION)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'VERSION must contain a three-part version, such as 1.0.0.'
 tag="v$version"
 commit="$(git rev-parse HEAD)"
-BUILD_NUMBER="$(git rev-list --count HEAD)"
+BUILD_NUMBER="$(cat BUILD_NUMBER)"
+[[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || fail 'BUILD_NUMBER must be a positive integer without leading zeroes.'
 export BUILD_NUMBER
 export PATH="$HOME/.cargo/bin:$PATH"
 scratch="$(mktemp -d)"
@@ -143,7 +144,8 @@ mounted=''
 
 (cd build/release && shasum -a 256 "$asset" > "$asset.sha256" && shasum -a 256 "$dmg_asset" > "$dmg_asset.sha256")
 {
-  printf 'Commit: %s\nBuild number: %s\nTarget: aarch64-apple-darwin\n' "$commit" "$BUILD_NUMBER"
+  printf 'Commit: %s\nCommit count: %s\nBuild number: %s\nTarget: aarch64-apple-darwin\n' \
+    "$commit" "$(git rev-list --count HEAD)" "$BUILD_NUMBER"
   (cd engine && rustc --version && cargo --version)
   swift --version
   xcodebuild -version

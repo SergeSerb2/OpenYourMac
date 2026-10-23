@@ -19,7 +19,8 @@ Usage: scripts/build-app.sh [options]
   -h, --help       Show this help
 
 Set CODESIGN_IDENTITY to a signing identity; the default is ad-hoc signing (-).
-Set BUILD_NUMBER to a positive integer when building without full Git history.
+The build number comes from BUILD_NUMBER. Set the BUILD_NUMBER environment variable
+to a positive integer to override it for a local build.
 Universal builds require both aarch64-apple-darwin and x86_64-apple-darwin Rust targets.
 USAGE
 }
@@ -84,9 +85,7 @@ version="$(cat "$repo_root/VERSION")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'VERSION must contain a three-part version, such as 1.0.0.'
 build_number="${BUILD_NUMBER:-}"
 if [[ -z "$build_number" ]]; then
-  [[ "$(git -C "$repo_root" rev-parse --is-shallow-repository 2>/dev/null || true)" == false ]] || \
-    fail 'Full Git history is unavailable. Set BUILD_NUMBER to the release commit count.'
-  build_number="$(git -C "$repo_root" rev-list --count HEAD)" || fail 'Cannot determine the Git commit count. Set BUILD_NUMBER.'
+  build_number="$(cat "$repo_root/BUILD_NUMBER")" || fail 'Cannot read BUILD_NUMBER.'
 fi
 [[ "$build_number" =~ ^[1-9][0-9]*$ ]] || fail 'BUILD_NUMBER must be a positive integer without leading zeroes.'
 

@@ -6,6 +6,13 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Keep app build numbers independent of Git history and above earlier builds.
+- Check the app build number when verifying release bundles.
+
 ## [1.0.0] - 2026-10-21
 
 ### Added
