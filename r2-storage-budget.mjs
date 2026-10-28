@@ -236,18 +236,19 @@ function isCurrentMetadata(object) {
   );
 }
 
-function strings(value) {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(strings);
-  if (value && typeof value === "object") return Object.values(value).flatMap(strings);
-  return [];
-}
-
 async function protectedObjects(s3, objects, incoming) {
   const identities = new Map(objects.map((o) => [`${o.bucket}/${o.key}`, o]));
   const protectedKeys = new Set();
   const protect = (o) => protectedKeys.add(`${o.bucket}/${o.key}`);
-  for (const object of objects) {
+  const inspected = [...objects];
+  if (isCurrentMetadata(incoming)) {
+    if (incoming.bytes > 2 * 1024 * 1024) throw new Error("Incoming update metadata is too large.");
+    const bytes = incoming.metadata ?? (incoming.file ? await readFile(incoming.file) : undefined);
+    if (!bytes || bytes.length !== incoming.bytes)
+      throw new Error("Incoming update metadata bytes are required before upload.");
+    inspected.push({ ...incoming, modified: Date.now(), incomingText: bytes.toString("utf8") });
+  }
+  for (const object of inspected) {
     if (
       !group(object) ||
       object.modified > Date.now() - 30 * 60_000 ||
@@ -258,17 +259,30 @@ async function protectedObjects(s3, objects, incoming) {
     protect(object);
     if (object.bytes > 2 * 1024 * 1024)
       throw new Error("Current update metadata is too large for safe retention.");
-    const response = await s3("GET", object.bucket, object.key, undefined, {
-      "if-match": object.etag,
-    });
-    if (!response.ok)
-      throw new Error("Current update metadata changed or could not be read. Upload blocked.");
-    const text = await boundedText(response, 2 * 1024 * 1024);
+    let text = object.incomingText;
+    if (text === undefined) {
+      const response = await s3("GET", object.bucket, object.key, undefined, {
+        "if-match": object.etag,
+      });
+      if (!response.ok)
+        throw new Error("Current update metadata changed or could not be read. Upload blocked.");
+      text = await boundedText(response, 2 * 1024 * 1024);
+    }
+    let jsonReferences;
+    if (object.key.endsWith(".json")) {
+      const data = JSON.parse(text);
+      jsonReferences = object.key.endsWith("/manifest.json")
+        ? [data.launchAsset?.url, ...(data.assets ?? []).map((asset) => asset.url)]
+        : [data.path];
+      if (jsonReferences.some((ref) => typeof ref !== "string" || !ref))
+        throw new Error("Update metadata has invalid asset references.");
+    }
     const references = object.key.endsWith(".json")
-      ? strings(JSON.parse(text))
+      ? jsonReferences
       : [
           ...[...text.matchAll(/https?:\/\/[^\s<>"']+/g)].map((m) => xml(m[0])),
           ...[...text.matchAll(/^\s*(?:-\s*)?(?:url|path):\s*["']?([^\s"']+)/gm)].map((m) => m[1]),
+          ...[...text.matchAll(/<enclosure\b[^>]*\burl=["']([^"']+)["']/g)].map((m) => xml(m[1])),
         ];
     for (const ref of references) {
       if (ref.length > 4096 || ref.includes("\n")) continue;
@@ -281,8 +295,14 @@ async function protectedObjects(s3, objects, incoming) {
       target = decodeURIComponent(target).replace(/^\//, "");
       const match = identities.get(`${object.bucket}/${target}`);
       if (!match) {
-        if (ref.startsWith("https://") && /\.r2\.dev\/|updates\.sergeserbinenko\.com\//.test(ref)) {
-          throw new Error("A current update feed references a missing object. Upload blocked.");
+        const localAsset =
+          !ref.startsWith(".") &&
+          /\.(?:zip|dmg|exe|AppImage|tgz|bundle|png|sha256|blockmap)(?:[?#].*)?$/i.test(ref);
+        if (
+          localAsset ||
+          (ref.startsWith("https://") && /\.r2\.dev\/|updates\.sergeserbinenko\.com\//.test(ref))
+        ) {
+          throw new Error("Update metadata references a missing object. Upload blocked.");
         }
         continue;
       }
@@ -465,7 +485,7 @@ async function main() {
   const info = await stat(file);
   if (!info.isFile()) throw new Error("Upload source must be a regular file.");
   await withR2Budget(
-    { bucket, key, bytes: info.size },
+    { bucket, key, bytes: info.size, file: path.resolve(file) },
     () =>
       new Promise((resolve, reject) => {
         const child = spawn(executable, childArgs, { stdio: "inherit", env: process.env });
