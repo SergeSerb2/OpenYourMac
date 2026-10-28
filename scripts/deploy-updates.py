@@ -75,7 +75,8 @@ def deploy(archive, feed, dmg):
     env = dict(os.environ, WRANGLER_SEND_METRICS="false", CI="1")
 
     def upload(path, object_key, content_type, cache_control):
-        subprocess.run([*WRANGLER, "r2", "object", "put", f"{BUCKET}/{object_key}",
+        subprocess.run(["node", str(ROOT / "r2-storage-budget.mjs"), "exec", BUCKET,
+                        object_key, str(path), "--", *WRANGLER, "r2", "object", "put", f"{BUCKET}/{object_key}",
                         "--remote", "--file", str(path), "--content-type", content_type,
                         "--cache-control", cache_control], env=env, check=True, timeout=300)
 
