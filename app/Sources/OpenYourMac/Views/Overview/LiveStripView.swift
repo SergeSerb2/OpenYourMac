@@ -94,6 +94,7 @@ private struct StripLane: View {
                         .accessibilityHidden(true)
                     ForEach(layout.columns) { column in
                         ColumnTile(column: column) { strip.focus(column, in: layout) }
+                            .contextMenu { WindowContextMenu(windows: column.windows) { strip.focus(column, in: layout) } }
                             .frame(width: max(column.frame.width * scale - 4, 10), height: laneHeight - 12)
                             .offset(x: (column.frame.minX - extent.lowerBound) * scale + 2, y: 6)
                     }
@@ -115,6 +116,7 @@ private struct StripLane: View {
                         .padding(.vertical, 3)
                         .background(Capsule().fill(Theme.tileFill))
                         .overlay(Capsule().strokeBorder(window.focused ? Theme.accent : .clear, lineWidth: 1.5))
+                        .contextMenu { WindowContextMenu(windows: [window], focus: nil) }
                     }
                 }
             }
@@ -202,6 +204,67 @@ private struct WindowTile: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .padding(.horizontal, 4)
+    }
+}
+
+/// Right-click menu for a column or floating window: focus it, or make its
+/// app always float or always tile with a window rule.
+private struct WindowContextMenu: View {
+    let windows: [EngineSnapshot.Window]
+    let focus: (() -> Void)?
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var config: ConfigStore
+
+    var body: some View {
+        if let focus {
+            Button("Focus") { focus() }
+            Divider()
+        }
+        ForEach(apps, id: \.bundleID) { app in
+            let current = config.rules.first { $0.bundleID == app.bundleID && $0.titleMatch == .any && !$0.isHandEdited }
+            if current?.floating != .float {
+                Button("Always Float \(app.name) Windows") { setRule(app, .float, existing: current) }
+            }
+            if current?.floating != .tile {
+                Button("Always Tile \(app.name) Windows") { setRule(app, .tile, existing: current) }
+            }
+            if let current, current.floating != .automatic {
+                Button("Use Automatic Rules for \(app.name)") { setRule(app, .automatic, existing: current) }
+            }
+        }
+        Divider()
+        Button("Edit Window Rules…") { state.navigate(to: .configuration, anchor: "rules") }
+    }
+
+    /// One entry per app, in column order.
+    private var apps: [(bundleID: String, name: String)] {
+        var seen = Set<String>()
+        return windows.compactMap { window in
+            guard !window.bundleID.isEmpty, seen.insert(window.bundleID).inserted else { return nil }
+            return (window.bundleID, window.appName)
+        }
+    }
+
+    private func setRule(_ app: (bundleID: String, name: String), _ floating: WindowRule.Floating, existing: WindowRule?) {
+        var rule = existing ?? WindowRule(
+            id: config.uniqueRuleID(base: app.name), bundleID: app.bundleID, appName: app.name,
+            titleMatch: .any, floating: floating, placement: .automatic
+        )
+        rule.floating = floating
+        Task {
+            switch await config.saveRule(rule) {
+            case .success:
+                let what: String
+                switch floating {
+                case .float: what = "\(app.name) windows now float"
+                case .tile: what = "\(app.name) windows now join the strip"
+                case .automatic: what = "\(app.name) windows use automatic rules"
+                }
+                state.toasts.show(what, kind: .success)
+            case .failure(let error):
+                state.toasts.show(error.message, kind: .error)
+            }
+        }
     }
 }
 
