@@ -11,8 +11,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/configuration-dark.png">
-    <img src="docs/images/configuration-light.png" width="760" alt="OpenYourMac settings: the Configuration page">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+    <img src="docs/images/overview-light.png" width="760" alt="OpenYourMac Overview: a live map of the strip, with the screen marked and the focused window highlighted">
   </picture>
 </p>
 
@@ -30,6 +30,8 @@ endorsed by ChainYourMac or its developer. OpenYourMac uses its own config path,
 
 ## Features
 
+- A live map of each display's strip in the app. Click a column to focus it.
+  The menu bar's **Windows** menu lists the same columns.
 - Strip layout with preset widths, full width, and column centering options.
 - Stacks and tabs: show several windows in one column, split or one at a time.
 - Pinned columns at the left and right edges.
@@ -39,7 +41,9 @@ endorsed by ChainYourMac or its developer. OpenYourMac uses its own config path,
 - Session restore, native tab groups, floating dialogs, window rules, and
   per-display controls.
 - Editable shortcuts and a Mac Setup page that checks for common conflicts.
-- A SwiftUI settings app, Raycast scripts, URL actions, and a CLI.
+- A SwiftUI settings app with search on the Shortcuts and Actions pages.
+- Raycast scripts, URL actions and page links, and a CLI.
+- Signed updates that wait for you: a badge, not an interruption.
 
 ## Requirements
 
@@ -134,7 +138,7 @@ Numbered actions address columns, not individual members of a stack.
 
 The app uses `~/.config/openyourmac/openyourmac.toml`. It saves changes in place
 and preserves comments and unknown keys. The engine reloads the file when it
-changes. The app's **Help › Settings File Reference** and the
+changes. The app's **Help › Settings File** and the
 [default config](resources/default-config.toml) cover the main settings.
 They are not a complete list of accepted engine keys.
 
@@ -184,8 +188,9 @@ Export Raycast scripts from **Help › Integrations**. See the
 ## Troubleshooting and FAQ
 
 **Accessibility was lost after a rebuild or update.** Keep one app copy in
-`/Applications`. Ad-hoc rebuilds can change its signature. Use **Help ›
-Troubleshooting › Repair Permission…**, then allow it again in Accessibility.
+`/Applications`. Ad-hoc rebuilds can change its signature. After an update, Overview shows
+**Reset and Allow Again**. You can also use **Help › Guide › Troubleshooting ›
+Repair Permission…**. Then allow the app again in Accessibility.
 
 **Windows jump or shortcuts fail.** Quit other window managers and disable their
 login items. Check **Mac Setup** and shortcut conflicts. Two managers can act on
@@ -205,12 +210,15 @@ Review warnings as well as the exit status. A skipped binding can produce a
 warning even when validation succeeds.
 
 **Where is the log?** `~/Library/Logs/OpenYourMac/engine.log`. Reveal it from
-**Help › System Information**. Detailed logging includes window titles. Review
+**Help › About**. Detailed logging includes window titles. Review
 logs for private data before sharing them and turn detailed logging off afterward.
 
 **How do updates work?** Sparkle checks for updates once a day when automatic
-checks are on. Use **Check for Updates…** in Configuration or the menu bar to
-check now. Sparkle verifies signed updates, installs them, and relaunches the app.
+checks are on. A new version shows a badge in the menu bar and the sidebar
+instead of an alert in front of your work. **Configuration › Updates** shows
+the current version and status. Use **Check Now** there, or **Check for
+Updates…** in the menu bar, to check now. A downloaded update offers
+**Restart to Update**. The window manager comes back as it was. Sparkle verifies signed updates, installs them, and relaunches the app.
 In Configuration, you can also enable automatic downloads and installation when
 the app quits. Existing automatic-check opt-outs are preserved. Update feeds and
 downloads come from the [Cloudflare feed](https://openyourmac-updates.sergeserbinenko.com/appcast.xml).

@@ -130,12 +130,12 @@ enum SnapshotRenderer {
             )
         }
         let columns: [[EngineSnapshot.Window]] = [
-            [window(1, "com.apple.mail", "Mail", x: -1060, width: 1000)],
-            [window(2, "com.apple.Safari", "Safari", x: -40, width: 820)],
-            [window(3, "com.apple.dt.Xcode", "Xcode", x: 790, width: 700, focused: true)],
-            [window(4, "com.apple.Terminal", "Terminal", x: 1500, width: 600, height: 464),
-             window(5, "com.apple.Notes", "Notes", x: 1500, y: 510, width: 600, height: 464)],
-            [window(6, "com.apple.finder", "Finder", x: 2110, width: 760)],
+            [window(1, "com.apple.mail", "Mail", x: -1012, width: 1000)],
+            [window(2, "com.apple.Safari", "Safari", x: 8, width: 820)],
+            [window(3, "com.apple.dt.Xcode", "Xcode", x: 836, width: 668, focused: true)],
+            [window(4, "com.apple.Terminal", "Terminal", x: 1512, width: 600, height: 464),
+             window(5, "com.apple.Notes", "Notes", x: 1512, y: 510, width: 600, height: 464)],
+            [window(6, "com.apple.finder", "Finder", x: 2120, width: 760)],
         ]
         let layout = StripLayout(
             displayID: 1, displayName: "Built-in Display", viewport: screen,
