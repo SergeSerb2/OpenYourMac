@@ -41,6 +41,8 @@ endorsed by ChainYourMac or its developer. OpenYourMac uses its own config path,
 - Focus borders, inactive-window dimming, gaps, and Dock awareness.
 - Session restore, native tab groups, floating dialogs, window rules, and
   per-display controls.
+- Pause window management for a while, for example during screen sharing.
+  It starts again by itself.
 - Editable shortcuts and a Mac Setup page that checks for common conflicts.
 - A SwiftUI settings app with search on the Shortcuts and Actions pages.
 - Raycast scripts, URL actions and page links, and a CLI.

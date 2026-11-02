@@ -88,6 +88,8 @@ Direction values are `west`, `east`, `north`, `south`, `first`, and `last`.
 | `openyourmac://window/nextdisplay` | Move the active window to the next display. |
 | `openyourmac://window/pin/<left\|right>` | Pin the active column to that edge, or unpin it. |
 | `openyourmac://strip/show` | Show the strip minimap. |
+| `openyourmac://pause/<minutes>` | Stop window management for 1–1440 minutes, then start it again. |
+| `openyourmac://resume` | End a pause now. |
 | `openyourmac://open/<page>` | Open the app window at a page: `overview`, `actions`, `shortcuts`, `settings`, `setup`, or `help`. |
 | `openyourmac://open/settings/<section>` | Open Configuration at a section: `general`, `updates`, `displays`, `layout`, `widths`, `appearance`, `gestures`, `behavior`, or `rules`. Help accepts `shortcuts`, `settings`, `integrations`, and `about`. |
 

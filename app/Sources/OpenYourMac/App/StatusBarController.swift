@@ -67,6 +67,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 DispatchQueue.main.async { self?.rebuild() }
             }
             .store(in: &subscriptions)
+        state.$pausedUntil
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.rebuild() }
+            }
+            .store(in: &subscriptions)
         state.updates.$phase
             .combineLatest(state.updates.$hasUnseenUpdate)
             .sink { [weak self] _, _ in
@@ -122,7 +127,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         item.button?.image = Self.statusImage(badged: badged, note: failed ? "needs attention" : "update available")
 
         add(AppPaths.appName, to: menu, enabled: false)
-        add("Status: \(engineState.label)", to: menu, enabled: false)
+        if let until = state.pausedUntil {
+            add("Status: Paused until \(AppState.timeFormatter.string(from: until))", to: menu, enabled: false)
+        } else {
+            add("Status: \(engineState.label)", to: menu, enabled: false)
+        }
         if case .failed(let failure) = engineState {
             add("\(failureTitle(failure)) — Show Details…", to: menu, action: #selector(showDetails))
         }
@@ -136,6 +145,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         add("Start", to: menu, action: #selector(start), key: "s", enabled: !engineState.isBusy)
         add("Stop", to: menu, action: #selector(stop), key: "t")
         add("Restart", to: menu, action: #selector(restart), key: "r", enabled: !engineState.isBusy)
+        if state.pausedUntil != nil {
+            add("Resume Now", to: menu, action: #selector(resumeNow))
+        } else {
+            let pause = add("Pause", to: menu, enabled: engineState.isRunning)
+            let pauseMenu = NSMenu(title: "Pause")
+            pauseMenu.autoenablesItems = false
+            for (title, minutes) in [("For 5 Minutes", 5), ("For 15 Minutes", 15), ("For 30 Minutes", 30), ("For 1 Hour", 60)] {
+                add(title, to: pauseMenu, action: #selector(pauseFor(_:))).tag = minutes
+            }
+            pause.submenu = pauseMenu
+        }
         let windows = add("Windows", to: menu, enabled: engineState.isRunning)
         let windowsMenu = NSMenu(title: "Windows")
         windowsMenu.delegate = self
@@ -295,6 +315,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func checkUpdates() { state.updates.checkForUpdates() }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func pauseFor(_ sender: NSMenuItem) { state.pause(minutes: sender.tag) }
+
+    @objc private func resumeNow() { state.resumeFromPause() }
 
     @objc private func performAction(_ sender: NSMenuItem) {
         guard let command = sender.representedObject as? EngineCommand else { return }

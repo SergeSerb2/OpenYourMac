@@ -88,6 +88,9 @@ final class AppState: ObservableObject {
     @Published var isMainWindowVisible = false
     /// Set by Help links to scroll a page to a section after switching.
     @Published var pendingAnchor: String?
+    /// While set, the window manager is stopped and starts again at this time.
+    @Published private(set) var pausedUntil: Date?
+    private var resumeTask: Task<Void, Never>?
 
     /// Called by the window controller to show the main window.
     var openMainWindow: () -> Void = {}
@@ -108,6 +111,17 @@ final class AppState: ObservableObject {
                 self?.setup.setMainWindowVisible(visible)
                 self?.engine.setMainWindowVisible(visible)
                 self?.strip.setWindowVisible(visible)
+            }
+            .store(in: &subscriptions)
+        // Starting by hand, or a failure, ends a pause.
+        engine.$state
+            .removeDuplicates()
+            .sink { [weak self] state in
+                guard let self, self.pausedUntil != nil else { return }
+                switch state {
+                case .running, .starting, .failed: self.endPause()
+                default: break
+                }
             }
             .store(in: &subscriptions)
         permissions.$isTrusted
@@ -132,6 +146,47 @@ final class AppState: ObservableObject {
 
     /// Starts the engine when everything it needs is ready. After an update
     /// relaunch, a running engine is restored even if automatic start is off.
+    // MARK: Pause
+
+    /// Stops arranging windows for a while, for example during screen sharing,
+    /// then starts again by itself. Starting or stopping by hand ends the pause.
+    func pause(minutes: Int) {
+        guard !AppPaths.isSnapshot, (1...1440).contains(minutes),
+              engine.state.isRunning || engine.state == .starting else { return }
+        let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        engine.stop()
+        pausedUntil = until
+        resumeTask?.cancel()
+        resumeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(minutes) * 60 * 1_000_000_000)
+            guard !Task.isCancelled, let self, self.pausedUntil == until else { return }
+            self.resumeFromPause()
+        }
+        toasts.show("Paused until \(Self.timeFormatter.string(from: until))", kind: .info)
+    }
+
+    /// Ends a pause now and starts the window manager when it is allowed to run.
+    func resumeFromPause() {
+        guard pausedUntil != nil else { return }
+        endPause()
+        permissions.refresh()
+        guard permissions.isTrusted, preferences.onboardingCompleted, engine.state == .stopped else { return }
+        engine.start()
+    }
+
+    private func endPause() {
+        pausedUntil = nil
+        resumeTask?.cancel()
+        resumeTask = nil
+    }
+
+    static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
     func autoStartIfReady(restoringRunningEngine: Bool = false) {
         setup.refresh()
         guard !AppPaths.isSnapshot, preferences.startEngineAutomatically || restoringRunningEngine,

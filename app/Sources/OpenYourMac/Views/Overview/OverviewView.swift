@@ -86,7 +86,9 @@ struct OverviewView: View {
         case .running: return "\(AppPaths.appName) is running"
         case .starting: return "Starting…"
         case .stopping: return "Stopping…"
-        case .stopped: return "\(AppPaths.appName) is stopped"
+        case .stopped:
+            if let until = state.pausedUntil { return "Paused until \(AppState.timeFormatter.string(from: until))" }
+            return "\(AppPaths.appName) is stopped"
         case .failed: return "The window manager stopped"
         }
     }
@@ -95,6 +97,8 @@ struct OverviewView: View {
         switch engine.state {
         case .running: return "Your windows are on the strip. Use the shortcuts below, or swipe the trackpad."
         case .starting, .stopping: return "One moment."
+        case .stopped where state.pausedUntil != nil:
+            return "Windows stay where they are. The window manager starts again by itself, or click Resume."
         case .stopped:
             return permissions.isTrusted
                 ? "Windows are left where they are. Click Start to put them on the strip."
@@ -120,6 +124,13 @@ struct OverviewView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(engine.state.isBusy)
+            } else if state.pausedUntil != nil {
+                Button {
+                    state.resumeFromPause()
+                } label: {
+                    Label("Resume Now", systemImage: "play.fill")
+                }
+                .buttonStyle(PrimaryButtonStyle())
             } else {
                 Button {
                     state.startEngineFromUI()
