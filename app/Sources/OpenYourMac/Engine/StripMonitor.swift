@@ -82,6 +82,13 @@ struct StripLayout: Equatable, Identifiable {
     /// True for the display with keyboard focus.
     var isActive = false
 
+    /// Any window on this display's current workspace, tiled or floating.
+    var anyWindow: EngineSnapshot.Window? { columns.first?.windows.first ?? floating.first }
+
+    /// The engine switches workspaces on the active display. Another display
+    /// can be reached only through one of its windows.
+    var canSwitchWorkspace: Bool { isActive || anyWindow != nil }
+
     struct WorkspaceSummary: Equatable, Identifiable {
         var number: Int
         var windowCount: Int
@@ -277,10 +284,12 @@ final class StripMonitor: ObservableObject {
     /// Shows another virtual workspace on a display. The engine switches the
     /// active display, so focus a window on another display first.
     func showWorkspace(_ number: Int, in layout: StripLayout) {
-        guard let engine, number != layout.workspaceNumber else { return }
+        guard let engine, number != layout.workspaceNumber, layout.canSwitchWorkspace else { return }
         Task {
-            if !layout.isActive, let window = layout.columns.first?.windows.first {
-                await engine.send(.focusWindow(window.windowID))
+            // The engine switches the active display's workspace. To reach
+            // another display, focus one of its windows first.
+            if !layout.isActive, let window = layout.anyWindow {
+                guard case .success = await engine.send(.focusWindow(window.windowID)) else { return }
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
             if case .failure(let error) = await engine.send(EngineCommand(["window", "virtualnum", String(number)])) {

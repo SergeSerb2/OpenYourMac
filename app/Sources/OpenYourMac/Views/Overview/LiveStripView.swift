@@ -160,7 +160,11 @@ private struct WorkspaceSwitcher: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Workspace \(workspace.number): \(workspace.windowCount) \(workspace.windowCount == 1 ? "window" : "windows")")
+                .disabled(!current && !layout.canSwitchWorkspace)
+                .opacity(current || layout.canSwitchWorkspace ? 1 : 0.45)
+                .help(layout.canSwitchWorkspace || current
+                      ? "Workspace \(workspace.number): \(workspace.windowCount) \(workspace.windowCount == 1 ? "window" : "windows")"
+                      : "Click a window on this display first, then switch its workspace.")
                 .accessibilityLabel("Workspace \(workspace.number), \(workspace.windowCount) windows\(current ? ", shown" : "")")
             }
         }

@@ -417,7 +417,11 @@ final class EngineController: ObservableObject {
                 try? await Task.sleep(nanoseconds: Self.watchdogInterval)
                 guard !Task.isCancelled, let self, self.process === child, child?.isRunning == true,
                       self.state == .running else { return }
-                if await self.engineAnswers() {
+                let answered = await self.engineAnswers()
+                // The user may have stopped or restarted the engine meanwhile.
+                guard !Task.isCancelled, let child, self.process === child, child.isRunning,
+                      self.state == .running else { return }
+                if answered {
                     armed = true
                     misses = 0
                     continue
@@ -426,7 +430,7 @@ final class EngineController: ObservableObject {
                 misses += 1
                 self.appendLog("[OpenYourMac] The window manager did not answer (\(misses)/\(Self.watchdogMisses))")
                 if misses >= Self.watchdogMisses {
-                    self.recoverFromHang()
+                    self.recoverFromHang(child)
                     return
                 }
             }
@@ -446,8 +450,8 @@ final class EngineController: ObservableObject {
     }
 
     /// Kills the stuck engine and starts a new one. Counts toward the crash budget.
-    private func recoverFromHang() {
-        guard let child = process, child.isRunning else { return }
+    private func recoverFromHang(_ child: Process) {
+        guard process === child, child.isRunning else { return }
         appendLog("[OpenYourMac] The window manager stopped answering; restarting it")
         onHangRecovered?()
         Darwin.kill(child.processIdentifier, SIGKILL)
