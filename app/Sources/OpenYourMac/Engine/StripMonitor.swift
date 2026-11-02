@@ -194,6 +194,9 @@ final class StripMonitor: ObservableObject {
     private var windowVisible = false
     private var task: Task<Void, Never>?
     private var subscriptions: Set<AnyCancellable> = []
+    /// `OpenYourMacEngine subscribe --json`, while the map is visible.
+    private var events: EngineEventStream?
+    private var eventRefresh: DispatchWorkItem?
 
     func configure(engine: EngineController) {
         self.engine = engine
@@ -248,19 +251,29 @@ final class StripMonitor: ObservableObject {
         hasLoaded = true
     }
 
+    /// While a map is visible, engine events trigger a query right away. A slow
+    /// poll covers missed events, and a faster one runs if events are unavailable.
     private func updatePolling() {
         guard !AppPaths.isSnapshot else { return }
         let shouldPoll = viewers > 0 && windowVisible && engine?.state.isRunning == true
         if shouldPoll, task == nil {
+            events = EngineEventStream { [weak self] in
+                MainActor.assumeIsolated { self?.scheduleEventRefresh() }
+            }
             task = Task { [weak self] in
                 while !Task.isCancelled {
                     await self?.refresh()
-                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    let streaming = self?.events?.isRunning == true
+                    try? await Task.sleep(nanoseconds: streaming ? 5_000_000_000 : 1_200_000_000)
                 }
             }
         } else if !shouldPoll, let running = task {
             running.cancel()
             task = nil
+            events?.stop()
+            events = nil
+            eventRefresh?.cancel()
+            eventRefresh = nil
             if engine?.state.isRunning != true {
                 layouts = []
                 hasLoaded = false
@@ -268,8 +281,18 @@ final class StripMonitor: ObservableObject {
         }
     }
 
-    private func refresh() async {
+    /// Several events arrive together during one change; query once after them.
+    private func scheduleEventRefresh() {
+        guard task != nil else { return }
+        eventRefresh?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { await self?.refresh() }
+        }
+        eventRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
 
+    private func refresh() async {
         var environment = ProcessInfo.processInfo.environment
         environment["NO_COLOR"] = "1"
         let result = await ProcessRunner.run(AppPaths.engineBinary, arguments: ["query", "state", "--json"], timeout: 2, environment: environment)
@@ -281,4 +304,67 @@ final class StripMonitor: ObservableObject {
         if next != layouts { layouts = next }
         hasLoaded = true
     }
+}
+
+/// Runs `OpenYourMacEngine subscribe --json` and calls `onEvent` on the main
+/// queue for each event line. The stream ends when the engine stops.
+private final class EngineEventStream: @unchecked Sendable {
+    private let lock = NSLock()
+    private let process = Process()
+    private var buffer = Data()
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return process.isRunning
+    }
+
+    init(onEvent: @escaping @Sendable () -> Void) {
+        let pipe = Pipe()
+        process.executableURL = AppPaths.engineBinary
+        process.arguments = ["subscribe", "--json"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["NO_COLOR"] = "1"
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard let self else { return }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            self.lock.lock()
+            self.buffer.append(data)
+            var lines = 0
+            while let newline = self.buffer.firstIndex(of: 10) {
+                self.buffer.removeSubrange(...newline)
+                lines += 1
+            }
+            // Keep memory bounded if a line never ends.
+            if self.buffer.count > 1 << 20 { self.buffer.removeAll() }
+            self.lock.unlock()
+            if lines > 0 { DispatchQueue.main.async(execute: onEvent) }
+        }
+        do {
+            try process.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+        }
+    }
+
+    func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard process.isRunning else { return }
+        process.terminate()
+        let pid = process.processIdentifier
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [process] in
+            if process.isRunning { Darwin.kill(pid, SIGKILL) }
+        }
+    }
+
+    deinit { stop() }
 }
