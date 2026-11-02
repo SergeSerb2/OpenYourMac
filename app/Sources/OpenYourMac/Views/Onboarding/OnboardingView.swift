@@ -138,6 +138,11 @@ struct OnboardingView: View {
             }
         case .completion:
             VStack(alignment: .leading, spacing: 12) {
+                if engine.state.isRunning {
+                    SectionHeader(title: "Your strip right now", caption: "Your windows, live. The dashed frame is your screen.")
+                    Card(inset: 12) { LiveStripView() }
+                        .padding(.bottom, 6)
+                }
                 SectionHeader(title: "Try it now")
                 OnboardingShortcutsCard()
                 Text("Find every shortcut in Help. Make them your own in Shortcuts.")
