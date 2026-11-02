@@ -6,7 +6,7 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-11-02
 
 ### Added
 
@@ -35,7 +35,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Restart the window manager when it stops answering, not only when it exits.
-
 - After an update relaunch, the window manager and window return as they were.
 - After an update that loses Accessibility access, Overview explains how to
   allow the app again.
