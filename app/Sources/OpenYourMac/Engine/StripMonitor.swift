@@ -22,12 +22,14 @@ struct EngineSnapshot: Decodable, Equatable {
         var displayID: UInt32?
         var frame: Frame?
         var visible: Bool
+        /// 1-based strip column. Engines before this field omit it.
+        var column: Int? = nil
 
         var id: Int { windowID }
 
         enum CodingKeys: String, CodingKey {
             case windowID = "window_id", bundleID = "bundle_id", appName = "app_name"
-            case title, focused, floating, displayID = "display_id", frame, visible
+            case title, focused, floating, displayID = "display_id", frame, visible, column
         }
     }
 
@@ -86,29 +88,83 @@ struct StripLayout: Equatable, Identifiable {
         for workspace in snapshot.virtualWorkspaces where workspace.active {
             let byDisplay = Dictionary(grouping: workspace.windows.filter { $0.displayID != nil && $0.frame != nil }) { $0.displayID! }
             for (displayID, windows) in byDisplay {
-                let tiled = windows.filter { !$0.floating }.sorted { ($0.frame!.x, $0.frame!.y) < ($1.frame!.x, $1.frame!.y) }
-                var columns: [Column] = []
-                for window in tiled {
-                    let rect = window.frame!.rect
-                    if let last = columns.last, abs(last.frame.minX - rect.minX) < 4 {
-                        columns[columns.count - 1].windows.append(window)
-                        columns[columns.count - 1].frame = last.frame.union(rect)
-                    } else {
-                        columns.append(Column(windows: [window], frame: rect, number: columns.count + 1))
-                    }
-                }
                 let viewport = CGDisplayBounds(displayID)
+                let tiled = windows.filter { !$0.floating }
+                let columns = tiled.allSatisfy({ $0.column != nil })
+                    ? logicalColumns(tiled, viewport: viewport)
+                    : columnsByFrame(tiled)
                 result.append(StripLayout(
                     displayID: displayID,
                     displayName: Self.name(of: displayID),
                     viewport: viewport.isEmpty ? (columns.first?.frame ?? .zero) : viewport,
                     columns: columns,
-                    floating: windows.filter(\.floating),
+                    floating: windows.filter { $0.floating && $0.bundleID != AppPaths.bundleIdentifier },
                     workspaceNumber: workspace.number
                 ))
             }
         }
         return result.sorted { $0.viewport.minX < $1.viewport.minX }
+    }
+
+    /// Places columns by strip order. Off-screen windows are parked at a display
+    /// edge, so only a column that is fully on screen gives a true position.
+    /// The others are laid out from it with their real widths.
+    private static func logicalColumns(_ windows: [EngineSnapshot.Window], viewport: CGRect) -> [Column] {
+        let grouped = Dictionary(grouping: windows) { $0.column ?? 0 }
+        let keys = grouped.keys.sorted()
+        let ordered = keys.map { key in
+            grouped[key]!.sorted { $0.frame!.y < $1.frame!.y }
+        }
+        guard !ordered.isEmpty else { return [] }
+        let widths = ordered.map { column in column.map { $0.frame!.width }.max() ?? 0 }
+        // A parked window shows only a sliver. A column counts as on screen
+        // when most of it, or most of the screen, shows it.
+        let visibleWidths = ordered.map { column in
+            column.map { $0.frame!.rect.intersection(viewport).width }.max() ?? 0
+        }
+        let onScreen = ordered.indices.map { index in
+            visibleWidths[index] >= min(widths[index], viewport.width) * 0.6
+        }
+        let anchor = ordered.indices.first { onScreen[$0] && ordered[$0].contains(where: \.focused) }
+            ?? ordered.indices.filter { onScreen[$0] }.max { visibleWidths[$0] < visibleWidths[$1] }
+        // The gap between two neighbouring on-screen columns, when there are two.
+        let gap = ordered.indices.dropLast().first { onScreen[$0] && onScreen[$0 + 1] }
+            .map { ordered[$0 + 1][0].frame!.x - (ordered[$0][0].frame!.x + widths[$0]) }
+            .map { min(max($0, 0), 64) } ?? 8
+        var xs = Array(repeating: 0.0, count: ordered.count)
+        let start = anchor ?? 0
+        xs[start] = anchor.map { ordered[$0][0].frame!.x } ?? viewport.minX
+        for index in stride(from: start + 1, to: ordered.count, by: 1) {
+            xs[index] = xs[index - 1] + widths[index - 1] + gap
+        }
+        for index in stride(from: start - 1, through: 0, by: -1) {
+            xs[index] = xs[index + 1] - widths[index] - gap
+        }
+        return ordered.enumerated().map { index, column in
+            let top = column.map { $0.frame!.y }.min() ?? viewport.minY
+            let bottom = column.map { $0.frame!.y + $0.frame!.height }.max() ?? viewport.maxY
+            return Column(
+                windows: column,
+                frame: CGRect(x: xs[index], y: top, width: widths[index], height: bottom - top),
+                number: keys[index]
+            )
+        }
+    }
+
+    /// Older engines: group windows that share a left edge.
+    private static func columnsByFrame(_ windows: [EngineSnapshot.Window]) -> [Column] {
+        let tiled = windows.sorted { ($0.frame!.x, $0.frame!.y) < ($1.frame!.x, $1.frame!.y) }
+        var columns: [Column] = []
+        for window in tiled {
+            let rect = window.frame!.rect
+            if let last = columns.last, abs(last.frame.minX - rect.minX) < 4 {
+                columns[columns.count - 1].windows.append(window)
+                columns[columns.count - 1].frame = last.frame.union(rect)
+            } else {
+                columns.append(Column(windows: [window], frame: rect, number: columns.count + 1))
+            }
+        }
+        return columns
     }
 
     private static func name(of displayID: UInt32) -> String {
@@ -163,7 +219,7 @@ final class StripMonitor: ObservableObject {
     /// Focuses a column from the map.
     func focus(_ column: StripLayout.Column, in layout: StripLayout) {
         guard let engine else { return }
-        let isLast = column.number == layout.columns.count
+        let isLast = column.number == layout.columns.map(\.number).max()
         let command: EngineCommand? = isLast ? .focus(.last) : (column.number <= 8 ? .focus(index: column.number) : nil)
         Task {
             if let command {
@@ -202,6 +258,7 @@ final class StripMonitor: ObservableObject {
     }
 
     private func refresh() async {
+
         var environment = ProcessInfo.processInfo.environment
         environment["NO_COLOR"] = "1"
         let result = await ProcessRunner.run(AppPaths.engineBinary, arguments: ["query", "state", "--json"], timeout: 2, environment: environment)

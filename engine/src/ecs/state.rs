@@ -845,6 +845,10 @@ impl QueryState for PaneruQueryState {
                             height: frame.height(),
                         }),
                         visible: visibility.is_some_and(|(_, visible)| visible),
+                        column: strip
+                            .index_of(entity)
+                            .ok()
+                            .and_then(|index| u32::try_from(index + 1).ok()),
                     })
                 })
                 .collect::<Vec<_>>();

@@ -490,6 +490,7 @@ mod tests {
                     height: 600,
                 }),
                 visible: true,
+                column: None,
             })
             .collect();
 

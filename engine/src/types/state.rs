@@ -127,6 +127,11 @@ pub struct WindowState {
     /// hidden, and showing more than the sliver Paneru leaves poking out for
     /// off-screen windows.
     pub visible: bool,
+    /// 1-based strip column, left to right. `None` for floating windows.
+    /// Off-screen windows are parked at a display edge, so `frame` does not
+    /// show their place in the strip; this does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 impl QueryState {
@@ -290,6 +295,7 @@ mod tests {
                     height: 600,
                 }),
                 visible: true,
+                column: None,
             }],
             active: ActiveState::default(),
         };
@@ -323,6 +329,7 @@ mod tests {
                 height: 100,
             }),
             visible,
+            column: None,
         };
 
         let state = QueryState {

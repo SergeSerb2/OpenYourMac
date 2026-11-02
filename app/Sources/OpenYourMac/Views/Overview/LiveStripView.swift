@@ -123,7 +123,7 @@ private struct StripLane: View {
 
     /// "2 off screen", counting columns that lie fully outside the display.
     private var offscreenSummary: String? {
-        let count = layout.columns.filter { !$0.frame.intersects(layout.viewport.insetBy(dx: 2, dy: 0)) }.count
+        let count = layout.columns.filter { $0.frame.intersection(layout.viewport).width < min($0.frame.width, layout.viewport.width) * 0.6 }.count
         return count > 0 ? "\(count) off screen" : nil
     }
 }
@@ -173,19 +173,35 @@ private struct WindowTile: View {
     var body: some View {
         GeometryReader { proxy in
             let narrow = proxy.size.width < 64
-            VStack(spacing: 4) {
-                AppIconView(bundleID: window.bundleID, size: compact || narrow ? 22 : 32)
-                if !narrow && !compact {
-                    Text(window.appName)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .padding(.horizontal, 4)
+            Group {
+                if compact {
+                    // A stacked window: icon and name on one line when there is room.
+                    HStack(spacing: 6) {
+                        AppIconView(bundleID: window.bundleID, size: 20)
+                        if proxy.size.width >= 96 { name }
+                    }
+                } else {
+                    VStack(spacing: 4) {
+                        AppIconView(bundleID: window.bundleID, size: narrow ? 22 : 32)
+                        if !narrow { name }
+                    }
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(compact ? Color.primary.opacity(window.focused ? 0.10 : 0.04) : .clear)
+            )
         }
+    }
+
+    private var name: some View {
+        Text(window.appName)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Theme.textPrimary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 4)
     }
 }
 
