@@ -120,7 +120,7 @@ final class URLRouter {
         let canStart = state.permissions.isTrusted && state.preferences.onboardingCompleted
         switch verb {
         case "stop":
-            engine.stop()
+            state.stopEngineByUser()
         case "start":
             if canStart {
                 engine.start()
@@ -131,7 +131,7 @@ final class URLRouter {
             }
         case "toggle":
             if engine.state.isRunning || engine.state == .starting {
-                engine.stop()
+                state.stopEngineByUser()
             } else if canStart {
                 engine.start()
             }

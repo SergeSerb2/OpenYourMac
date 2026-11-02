@@ -166,12 +166,28 @@ final class AppState: ObservableObject {
     }
 
     /// Ends a pause now and starts the window manager when it is allowed to run.
+    /// The pause's own stop can still be finishing, so wait for it first.
     func resumeFromPause() {
         guard pausedUntil != nil else { return }
         endPause()
-        permissions.refresh()
-        guard permissions.isTrusted, preferences.onboardingCompleted, engine.state == .stopped else { return }
-        engine.start()
+        Task { [weak self] in
+            for _ in 0..<50 {
+                guard let self, self.engine.state == .stopping else { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard let self else { return }
+            self.permissions.refresh()
+            guard self.permissions.isTrusted, self.preferences.onboardingCompleted,
+                  self.engine.state == .stopped else { return }
+            self.engine.start()
+        }
+    }
+
+    /// A stop the user asked for. It also ends a pause, so the window manager
+    /// does not start again at the pause's end.
+    func stopEngineByUser() {
+        endPause()
+        engine.stop()
     }
 
     private func endPause() {

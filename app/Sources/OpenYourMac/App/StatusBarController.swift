@@ -302,7 +302,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func start() { permittedStart() }
 
-    @objc private func stop() { state.engine.stop() }
+    @objc private func stop() { state.stopEngineByUser() }
 
     @objc private func restart() { permittedStart(restart: true) }
 

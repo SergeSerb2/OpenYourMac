@@ -200,7 +200,7 @@ private struct EnginePowerCard: View {
             Spacer(minLength: 0)
             Toggle("Window Manager", isOn: Binding(
                 get: { engine.state.isRunning || engine.state == .starting },
-                set: { on in on ? state.startEngineFromUI() : engine.stop() }
+                set: { on in on ? state.startEngineFromUI() : state.stopEngineByUser() }
             ))
             .toggleStyle(.switch)
             .labelsHidden()

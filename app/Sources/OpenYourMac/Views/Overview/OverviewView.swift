@@ -118,7 +118,7 @@ struct OverviewView: View {
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(engine.state.isBusy)
                 Button {
-                    engine.stop()
+                    state.stopEngineByUser()
                 } label: {
                     Label("Stop", systemImage: "stop.fill")
                 }
