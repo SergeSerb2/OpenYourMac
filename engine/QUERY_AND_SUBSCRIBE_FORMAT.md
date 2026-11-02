@@ -36,15 +36,33 @@ The state schema is separate from the on-disk session format.
 | --- | --- |
 | `state` | Object with `version`, `timestamp`, `active`, and `virtual_workspaces`. |
 | `active` | Active display, native Space, virtual workspace, and focused-window fields. |
-| `virtual-workspaces` | Array of rows with `number`, `native_workspace_id`, `active`, and `windows`. |
+| `virtual-workspaces` | Array of rows with `number`, `native_workspace_id`, `active`, `visible`, `display_id`, and `windows`. |
 | `on-screen` | Array of visible windows, ordered left to right per display; hidden/minimized windows and edge slivers are excluded. |
+
+`active` marks the one workspace with keyboard focus. `visible` is true for every
+workspace a display shows now: its selected virtual workspace on its current
+Space. With several displays, several rows can be visible. A workspace's
+`display_id` is the display that owns its strip. A window's `display_id` can
+differ, because off-screen windows are parked at a display edge.
+
+To focus one window from a query result, send its `window_id`:
+
+```sh
+OpenYourMacEngine send-cmd window focuswindow 1234
+```
+
+This works on any display and strip. Numbered focus (`window focus 3`) uses the
+active display's strip.
 
 The active object contains `display_id`, `native_workspace_id`,
 `virtual_workspace_number`, `focused_window_id`, `focused_bundle_id`,
 `focused_app_name`, and `focused_window_title`. Fields can be `null` when absent.
 A window has `window_id`, `bundle_id`, `app_name`, `title`, `focused`, `floating`,
-`display_id`, `frame`, and `visible`. `frame` can be null, or an object with
-`x`, `y`, `width`, and `height` in global display coordinates.
+`display_id`, `frame`, `visible`, and `column`. `frame` can be null, or an object with
+`x`, `y`, `width`, and `height` in global display coordinates. `column` is the
+1-based strip column, left to right; windows in one stack share it. It is absent
+for floating windows. Off-screen windows are parked at a display edge, so use
+`column`, not `frame`, for their order in the strip.
 
 See [src/types/state.rs](src/types/state.rs) for the complete typed contract.
 Treat window titles and app information as private data when logging results.

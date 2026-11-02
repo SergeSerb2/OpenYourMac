@@ -58,10 +58,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.state = state
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        let image = NSImage(systemSymbolName: "rectangle.3.offgrid", accessibilityDescription: AppPaths.appName)
-            ?? NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: AppPaths.appName)
-        image?.isTemplate = true
-        item.button?.image = image
+        item.button?.image = Self.statusImage(badged: false)
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
@@ -70,10 +67,42 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 DispatchQueue.main.async { self?.rebuild() }
             }
             .store(in: &subscriptions)
+        state.updates.$phase
+            .combineLatest(state.updates.$hasUnseenUpdate)
+            .sink { [weak self] _, _ in
+                DispatchQueue.main.async { self?.rebuild() }
+            }
+            .store(in: &subscriptions)
         rebuild()
     }
 
+    /// The strip glyph, with a small dot when an update waits for the user.
+    private static func statusImage(badged: Bool) -> NSImage? {
+        let name = AppPaths.appName
+        guard let symbol = NSImage(systemSymbolName: "rectangle.3.offgrid", accessibilityDescription: name)
+            ?? NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: name) else { return nil }
+        guard badged else {
+            symbol.isTemplate = true
+            return symbol
+        }
+        let size = NSSize(width: symbol.size.width + 4, height: max(symbol.size.height, 16))
+        let image = NSImage(size: size, flipped: false) { rect in
+            let origin = NSPoint(x: 0, y: (rect.height - symbol.size.height) / 2)
+            symbol.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            let dot = NSRect(x: rect.maxX - 6, y: rect.maxY - 6, width: 6, height: 6)
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "\(name), update available"
+        return image
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        guard menu === item.menu else { return }
+        // The Windows submenu reads this when it opens.
+        state.strip.refreshSoon()
         state.setup.refresh()
         state.loginItem.refresh()
         rebuild()
@@ -87,6 +116,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         let engineState = state.engine.state
         item.button?.appearsDisabled = !engineState.isRunning
+        let updates = state.updates
+        let badged = updates.hasUnseenUpdate || { if case .readyToInstall = updates.phase { return true } else { return false } }()
+        item.button?.image = Self.statusImage(badged: badged)
 
         add(AppPaths.appName, to: menu, enabled: false)
         add("Status: \(engineState.label)", to: menu, enabled: false)
@@ -103,6 +135,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         add("Start", to: menu, action: #selector(start), key: "s", enabled: !engineState.isBusy)
         add("Stop", to: menu, action: #selector(stop), key: "t")
         add("Restart", to: menu, action: #selector(restart), key: "r", enabled: !engineState.isBusy)
+        let windows = add("Windows", to: menu, enabled: engineState.isRunning)
+        let windowsMenu = NSMenu(title: "Windows")
+        windowsMenu.delegate = self
+        windows.submenu = windowsMenu
         add("Actions", to: menu).submenu = makeActionsMenu()
         menu.addItem(.separator())
 
@@ -119,8 +155,54 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        add("Check for Updates…", to: menu, action: #selector(checkUpdates), enabled: state.updates.canCheckForUpdates)
+        add(updateMenuTitle, to: menu, action: #selector(checkUpdates), enabled: updates.primaryActionEnabled)
         add("Quit \(AppPaths.appName)", to: menu, action: #selector(quit), key: "q")
+    }
+
+    /// Fills the Windows submenu with the strip's columns as it opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "Windows" else { return }
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        let layouts = state.strip.layouts
+        if layouts.allSatisfy({ $0.columns.isEmpty }) {
+            add("No windows on the strip", to: menu, enabled: false)
+        }
+        for layout in layouts where !layout.columns.isEmpty {
+            if layouts.count > 1 {
+                add(layout.displayName, to: menu, enabled: false)
+            }
+            for column in layout.columns {
+                let names = column.windows.map(\.appName).joined(separator: " + ")
+                let title = column.windows.count == 1 && !column.windows[0].title.isEmpty
+                    ? "\(names) — \(column.windows[0].title)" : names
+                let row = add(String(title.prefix(70)), to: menu, action: #selector(focusColumn(_:)))
+                row.representedObject = ColumnTarget(layout: layout, column: column)
+                row.state = column.isFocused ? .on : .off
+                if let bundleID = column.windows.first?.bundleID {
+                    let icon = AppIconCache.icon(for: bundleID).copy() as? NSImage
+                    icon?.size = NSSize(width: 16, height: 16)
+                    row.image = icon
+                }
+                row.toolTip = "Column \(column.number)"
+            }
+        }
+        menu.addItem(.separator())
+        add("Show Strip Map…", to: menu, action: #selector(showDetails))
+    }
+
+    private final class ColumnTarget: NSObject {
+        let layout: StripLayout
+        let column: StripLayout.Column
+        init(layout: StripLayout, column: StripLayout.Column) {
+            self.layout = layout
+            self.column = column
+        }
+    }
+
+    @objc private func focusColumn(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? ColumnTarget else { return }
+        state.strip.focus(target.column, in: target.layout)
     }
 
     private func makeActionsMenu() -> NSMenu {
@@ -144,6 +226,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         row.isEnabled = enabled
         menu.addItem(row)
         return row
+    }
+
+    private var updateMenuTitle: String {
+        switch state.updates.phase {
+        case .available(let update): return "Update Available: \(AppPaths.appName) \(update.version)…"
+        case .readyToInstall(let update): return "Restart to Install \(update.version)"
+        case .installing(let update): return "Installing \(update.version)…"
+        default: return "Check for Updates…"
+        }
     }
 
     private func failureTitle(_ failure: EngineFailure) -> String {

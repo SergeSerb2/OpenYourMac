@@ -16,7 +16,7 @@ permission.
    OpenYourMac in your Applications folder.
 
 If OpenYourMac is already on but the app still says the permission is missing
-(this can happen after an update), use **Help › Troubleshooting › Repair
+(this can happen after an update), use **Help › Guide › Troubleshooting › Repair
 Permission…**. It removes the old entry and asks again.
 
 ## 2. Keep OpenYourMac in Applications

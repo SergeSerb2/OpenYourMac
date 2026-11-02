@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 enum SidebarPage: String, CaseIterable, Identifiable {
-    case overview, macSetup, actions, configuration, shortcuts, help
+    case overview, actions, shortcuts, configuration, macSetup, help
 
     var id: String { rawValue }
 
@@ -17,6 +17,39 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .help: return "Help"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .overview: return "rectangle.3.offgrid"
+        case .macSetup: return "checklist"
+        case .actions: return "bolt.fill"
+        case .configuration: return "slider.horizontal.3"
+        case .shortcuts: return "command"
+        case .help: return "questionmark"
+        }
+    }
+
+    /// Names accepted by `openyourmac://open/<page>`.
+    init?(urlName: String) {
+        switch urlName.lowercased() {
+        case "overview", "home": self = .overview
+        case "actions": self = .actions
+        case "shortcuts", "keys": self = .shortcuts
+        case "configuration", "settings", "preferences": self = .configuration
+        case "macsetup", "mac-setup", "setup": self = .macSetup
+        case "help": self = .help
+        default: return nil
+        }
+    }
+
+    /// ⌘1…⌘6 in the Go menu.
+    var shortcutNumber: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
+
+    /// Sidebar order and headings.
+    static let groups: [(title: String, pages: [SidebarPage])] = [
+        ("Windows", [.overview, .actions, .shortcuts]),
+        ("Setup", [.configuration, .macSetup, .help]),
+    ]
 
     var subtitle: String {
         switch self {
@@ -47,6 +80,7 @@ final class AppState: ObservableObject {
     let updates = UpdateChecker()
     let toasts = ToastCenter()
     let frontmost = FrontmostAppTracker()
+    let strip = StripMonitor()
 
     @Published var page: SidebarPage = .overview
     @Published var showOnboarding = false
@@ -63,12 +97,14 @@ final class AppState: ObservableObject {
     init() {
         engine.configure(config: config, preferences: preferences, permissions: permissions)
         displays.configure(config: config)
+        strip.configure(engine: engine)
         setup.configure(config: config)
         $isMainWindowVisible
             .removeDuplicates()
             .sink { [weak self] visible in
                 self?.setup.setMainWindowVisible(visible)
                 self?.engine.setMainWindowVisible(visible)
+                self?.strip.setWindowVisible(visible)
             }
             .store(in: &subscriptions)
         permissions.$isTrusted
@@ -91,9 +127,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    func autoStartIfReady() {
+    /// Starts the engine when everything it needs is ready. After an update
+    /// relaunch, a running engine is restored even if automatic start is off.
+    func autoStartIfReady(restoringRunningEngine: Bool = false) {
         setup.refresh()
-        guard !AppPaths.isSnapshot, preferences.startEngineAutomatically,
+        guard !AppPaths.isSnapshot, preferences.startEngineAutomatically || restoringRunningEngine,
               preferences.onboardingCompleted, permissions.isTrusted,
               setup.separateSpacesReady, engine.state == .stopped else { return }
         engine.start()
@@ -140,5 +178,6 @@ extension View {
             .environmentObject(state.updates)
             .environmentObject(state.toasts)
             .environmentObject(state.frontmost)
+            .environmentObject(state.strip)
     }
 }

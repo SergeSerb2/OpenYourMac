@@ -490,6 +490,7 @@ mod tests {
                     height: 600,
                 }),
                 visible: true,
+                column: None,
             })
             .collect();
 
@@ -501,6 +502,8 @@ mod tests {
                 number: virtual_workspace_number,
                 native_workspace_id: 10,
                 active: true,
+                visible: true,
+                display_id: Some(1),
                 windows,
             }],
         }

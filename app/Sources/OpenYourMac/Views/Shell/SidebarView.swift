@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var engine: EngineController
+    @EnvironmentObject private var setup: MacSetupChecker
     @Environment(\.isSnapshot) private var isSnapshot
 
     var body: some View {
@@ -11,7 +12,7 @@ struct SidebarView: View {
         }
         .background {
             if isSnapshot {
-                Color(nsColor: .dynamic(light: 0xE8E6E6, dark: 0x2B2A2A))
+                Color(nsColor: .dynamic(light: 0xECEBF2, dark: 0x26252C))
             } else {
                 VisualEffectBackground(material: .sidebar)
             }
@@ -30,189 +31,245 @@ struct SidebarView: View {
 
             header
                 .padding(.horizontal, 16)
-                .padding(.top, compact ? 8 : 19)
+                .padding(.top, compact ? 0 : 6)
+                .padding(.bottom, compact ? 12 : 20)
 
-            Rectangle()
-                .fill(Theme.separator)
-                .frame(height: 1)
-                .padding(.horizontal, 16)
-                .padding(.top, compact ? 8 : 12)
-                .padding(.bottom, compact ? 8 : 12)
-
-            VStack(spacing: 3) {
-                ForEach(SidebarPage.allCases) { page in
-                    SidebarItem(page: page, isSelected: state.page == page, compact: compact) {
-                        state.page = page
+            ForEach(Array(SidebarPage.groups.enumerated()), id: \.offset) { index, group in
+                Text(group.title.uppercased())
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                    .padding(.horizontal, 20)
+                    .padding(.top, index == 0 ? 0 : (compact ? 8 : 14))
+                    .padding(.bottom, 5)
+                    .accessibilityAddTraits(.isHeader)
+                VStack(spacing: 2) {
+                    ForEach(group.pages) { page in
+                        SidebarItem(
+                            page: page,
+                            isSelected: state.page == page,
+                            badge: page == .macSetup && !setup.failing.isEmpty ? setup.failing.count : nil,
+                            compact: compact
+                        ) {
+                            state.page = page
+                        }
                     }
                 }
+                .padding(.horizontal, 10)
             }
-            .padding(.horizontal, 12)
 
             Spacer(minLength: 12)
 
-            OpenSourceCard()
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+            SidebarUpdateCard()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
 
-            EngineControlTiles()
-                .padding(.horizontal, 16)
+            EnginePowerCard()
+                .padding(.horizontal, 12)
 
-            Text("\(AppPaths.appName) \(AppPaths.appVersion)")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity)
-                .padding(.top, compact ? 8 : 14)
-                .padding(.bottom, compact ? 10 : 16)
+            Button {
+                state.navigate(to: .help, anchor: "about")
+            } label: {
+                Text("Version \(AppPaths.appVersion) · Free and open source")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .help("About \(AppPaths.appName)")
+            .padding(.top, compact ? 8 : 12)
+            .padding(.bottom, compact ? 10 : 14)
         }
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(AppPaths.appName)
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
-            HStack(spacing: 5) {
-                StatusDot(color: engine.state.statusColor, size: 7)
-                Text(engine.state.sidebarLabel)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(engine.state.statusColor)
+        HStack(spacing: 10) {
+            BrandMark(size: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AppPaths.appName)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                HStack(spacing: 5) {
+                    StatusDot(color: engine.state.statusColor, size: 6)
+                        .background {
+                            if engine.state.isRunning {
+                                PulseRing(color: engine.state.statusColor)
+                            }
+                        }
+                    Text(engine.state.sidebarLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(engine.state.statusColor)
+                }
             }
         }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A soft ring that breathes around the running status dot.
+private struct PulseRing: View {
+    let color: Color
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isSnapshot) private var isSnapshot
+
+    var body: some View {
+        Circle()
+            .stroke(color.opacity(expanded ? 0 : 0.6), lineWidth: 1.5)
+            .scaleEffect(expanded ? 2.4 : 1)
+            .onAppear {
+                guard !reduceMotion, !isSnapshot else { return }
+                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { expanded = true }
+            }
+            .accessibilityHidden(true)
     }
 }
 
 private struct SidebarItem: View {
     let page: SidebarPage
     let isSelected: Bool
+    var badge: Int?
     var compact = false
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(page.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textPrimary.opacity(0.82))
-                    Text(page.subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.textTertiary)
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isSelected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.accent.opacity(0.14)))
+                    Image(systemName: page.systemImage)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.white : Theme.accent)
                 }
+                .frame(width: 26, height: 26)
+                Text(page.title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 0)
-                if isSelected {
-                    Capsule()
-                        .fill(Theme.accent)
-                        .frame(width: 3, height: 20)
+                if let badge {
+                    Text("\(badge)")
+                        .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Capsule().fill(Theme.warning))
+                        .accessibilityLabel("\(badge) to fix")
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 10)
-            .padding(.vertical, compact ? 5 : 8)
+            .padding(.horizontal, 7)
+            .padding(.vertical, compact ? 3 : 5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(isSelected ? AnyShapeStyle(Theme.contentBackground) : AnyShapeStyle(Color.primary.opacity(hovering ? 0.05 : 0)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(isSelected ? Theme.accent.opacity(0.16) : .clear, lineWidth: 1)
+                    .shadow(color: .black.opacity(isSelected ? 0.10 : 0), radius: 2, y: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .help("\(page.subtitle) (⌘\(page.shortcutNumber))")
         .accessibilityLabel("\(page.title), \(page.subtitle)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
-/// Bottom card that replaces a license badge: OpenYourMac is free and open source.
-private struct OpenSourceCard: View {
-    @EnvironmentObject private var state: AppState
-    @State private var hovering = false
-
-    var body: some View {
-        Button {
-            state.navigate(to: .help, anchor: "about")
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "heart.circle.fill")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Open Source · MIT")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                    Text("Free for every Mac")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Theme.accent.opacity(hovering ? 0.16 : 0.11))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Theme.accent.opacity(0.18), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("About OpenYourMac")
-    }
-}
-
-/// Start/Stop and Restart tiles at the bottom of the sidebar.
-private struct EngineControlTiles: View {
+/// Window manager on/off switch and restart, at the bottom of the sidebar.
+private struct EnginePowerCard: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var engine: EngineController
 
     var body: some View {
-        HStack(spacing: 8) {
-            tile(
-                title: engine.state.isRunning ? "Stop" : "Start",
-                systemImage: engine.state.isRunning ? "stop.fill" : "play.fill"
-            ) {
-                engine.state.isRunning ? engine.stop() : state.startEngineFromUI()
+        HStack(spacing: 9) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Window Manager")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
             }
-            tile(title: "Restart", systemImage: "arrow.clockwise") {
-                state.restartEngineFromUI()
-            }
-            .disabled(!engine.state.isRunning)
+            Spacer(minLength: 0)
+            Toggle("Window Manager", isOn: Binding(
+                get: { engine.state.isRunning || engine.state == .starting },
+                set: { on in on ? state.startEngineFromUI() : engine.stop() }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .controlSize(.small)
+            .disabled(engine.state.isBusy)
+            .help(engine.state.isRunning ? "Stop arranging windows" : "Start arranging windows")
         }
-        .disabled(engine.state.isBusy)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.contentBackground.opacity(0.85))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 
-    private func tile(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                Text(title)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.contentBackground.opacity(0.85))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
-            )
-            .contentShape(Rectangle())
+    private var detail: String {
+        switch engine.state {
+        case .running: return "Arranging windows"
+        case .starting: return "Starting…"
+        case .stopping: return "Stopping…"
+        case .stopped: return "Off"
+        case .failed: return "Needs attention"
         }
-        .buttonStyle(.plain)
+    }
+}
+
+/// Appears when a new version is waiting. Opens the Updates settings.
+private struct SidebarUpdateCard: View {
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var updates: UpdateChecker
+    @State private var hovering = false
+
+    var body: some View {
+        if let update = updates.phase.update {
+            Button {
+                state.navigate(to: .configuration, anchor: "updates")
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: isReady ? "arrow.clockwise.circle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(isReady ? "Restart to Update" : "Update Available")
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Text("Version \(update.version)")
+                            .font(.system(size: 10.5))
+                            .opacity(0.85)
+                    }
+                    .foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.accent.opacity(hovering ? 0.9 : 1))
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Show update details")
+            .accessibilityLabel(isReady ? "Restart to update to version \(update.version)" : "Update available: version \(update.version)")
+        }
+    }
+
+    private var isReady: Bool {
+        if case .readyToInstall = updates.phase { return true }
+        return false
     }
 }
 

@@ -8,7 +8,7 @@ use bevy::ecs::query::{Has, With, Without};
 use bevy::ecs::system::{Commands, Query, Res, Single};
 use bevy::math::IRect;
 use tracing::{Level, instrument};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 mod query;
 
@@ -87,6 +87,7 @@ pub fn register_commands(app: &mut bevy::app::App) {
             stack_windows_handler,
             command_move_focus,
             command_focus_unmanaged,
+            command_focus_window,
             command_focus_managed,
             command_raise_floating,
             command_toggle_floating_layer,
@@ -409,6 +410,26 @@ fn command_move_focus(
         commands.trigger(SendMessageTrigger(Event::Command {
             command: Command::Mouse(MouseMove::ToNextDisplay),
         }));
+    }
+}
+
+/// Focuses a window chosen by its ID, wherever it is. The usual focus
+/// handling then brings its strip and display into view.
+fn command_focus_window(
+    mut messages: MessageReader<Event>,
+    windows: Windows,
+    mut commands: Commands,
+) {
+    let Some(Operation::FocusWindow(window_id)) =
+        filter_window_operations(&mut messages, |op| matches!(op, Operation::FocusWindow(_)))
+            .next()
+    else {
+        return;
+    };
+    if let Some((_, entity)) = windows.find(*window_id) {
+        commands.focus_entity(entity, true);
+    } else {
+        warn!("focuswindow: no managed window with ID {window_id}");
     }
 }
 

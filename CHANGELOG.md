@@ -6,6 +6,33 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A live map of each display's strip on Overview. Click a column to focus it.
+- A Windows submenu in the menu bar that lists and focuses strip columns.
+- An Updates section with version, status, and Check Now or Restart to Update.
+- Update badges in the menu bar and sidebar instead of alerts during work.
+- Search on the Shortcuts and Actions pages.
+- `openyourmac://open/<page>[/<section>]` and `openyourmac://strip/show` URLs.
+- Go menu shortcuts (Command-1 to Command-6) for each page.
+- The engine's state query reports each window's strip `column`.
+
+### Changed
+
+- A new sidebar with page icons, groups, a Mac Setup badge, and a window
+  manager switch.
+- Help shows one topic at a time: Guide, Shortcuts, Settings File,
+  Integrations, and About.
+- Configuration has section chips; numbered actions use a compact pad.
+
+### Fixed
+
+- After an update relaunch, the window manager and window return as they were.
+- After an update that loses Accessibility access, Overview explains how to
+  allow the app again.
+
 ## [1.0.1] - 2026-10-23
 
 ### Added

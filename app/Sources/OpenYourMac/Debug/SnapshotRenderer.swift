@@ -43,6 +43,8 @@ enum SnapshotRenderer {
         }
         let pageFilter = ProcessInfo.processInfo.environment["OYM_SNAPSHOT_PAGES"]?.split(separator: ",").map(String.init)
         let increasedContrast = ProcessInfo.processInfo.environment["OYM_SNAPSHOT_CONTRAST"] == "increased"
+        applyUpdatePreview(ProcessInfo.processInfo.environment["OYM_SNAPSHOT_UPDATE"], to: state)
+        state.strip.setPreview(sampleStrip())
 
         for appearanceName in [NSAppearance.Name.darkAqua, .aqua] {
             let suffix = appearanceName == .darkAqua ? "dark" : "light"
@@ -90,6 +92,64 @@ enum SnapshotRenderer {
             }
         }
         print("Snapshots written to \(outputDirectory.path)")
+    }
+
+    /// `OYM_SNAPSHOT_UPDATE` shows one update state: checking, current, available,
+    /// installing, ready, failed, updated, or updated-permission.
+    private static func applyUpdatePreview(_ name: String?, to state: AppState) {
+        guard let name else { return }
+        let sample = AvailableUpdate(version: "1.1.0", build: "60", size: 19_400_000)
+        let checked = Date().addingTimeInterval(-3 * 3600)
+        switch name {
+        case "checking": state.updates.setPreview(.checking, lastCheck: checked)
+        case "current": state.updates.setPreview(.upToDate, lastCheck: checked)
+        case "available": state.updates.setPreview(.available(sample), lastCheck: checked)
+        case "installing": state.updates.setPreview(.installing(sample), lastCheck: checked)
+        case "ready": state.updates.setPreview(.readyToInstall(sample), lastCheck: checked)
+        case "failed":
+            state.updates.setPreview(.failed("Could not reach the update server. Check your internet connection and try again."), lastCheck: checked)
+        case "updated": state.updates.setPreview(.upToDate, lastCheck: Date(), updatedFrom: "1.0.0")
+        case "updated-permission":
+            state.updates.setPreview(.upToDate, lastCheck: Date(), updatedFrom: "1.0.0")
+            state.preferences.onboardingCompleted = true
+            state.permissions.setPreview(trusted: false)
+            state.engine.setPreviewState(.stopped)
+        default: break
+        }
+    }
+
+    /// A believable strip for the live map: two columns off screen, a stack,
+    /// and one floating window.
+    private static func sampleStrip() -> [StripLayout] {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        func window(_ id: Int, _ bundle: String, _ name: String, x: Double, y: Double = 38, width: Double, height: Double = 936,
+                    focused: Bool = false, floating: Bool = false) -> EngineSnapshot.Window {
+            EngineSnapshot.Window(
+                windowID: id, bundleID: bundle, appName: name, title: name, focused: focused, floating: floating,
+                displayID: 1, frame: .init(x: x, y: y, width: width, height: height), visible: true
+            )
+        }
+        let columns: [[EngineSnapshot.Window]] = [
+            [window(1, "com.apple.mail", "Mail", x: -1012, width: 1000)],
+            [window(2, "com.apple.Safari", "Safari", x: 8, width: 820)],
+            [window(3, "com.apple.dt.Xcode", "Xcode", x: 836, width: 668, focused: true)],
+            [window(4, "com.apple.Terminal", "Terminal", x: 1512, width: 600, height: 464),
+             window(5, "com.apple.Notes", "Notes", x: 1512, y: 510, width: 600, height: 464)],
+            [window(6, "com.apple.finder", "Finder", x: 2120, width: 760)],
+        ]
+        let layout = StripLayout(
+            displayID: 1, displayName: "Built-in Display", viewport: screen,
+            columns: columns.enumerated().map { index, windows in
+                StripLayout.Column(
+                    windows: windows,
+                    frame: windows.dropFirst().reduce(windows[0].frame!.rect) { $0.union($1.frame!.rect) },
+                    number: index + 1
+                )
+            },
+            floating: [window(7, "com.apple.calculator", "Calculator", x: 600, y: 300, width: 230, height: 400, floating: true)],
+            workspaceNumber: 1
+        )
+        return [layout]
     }
 
     private static func render<V: View>(

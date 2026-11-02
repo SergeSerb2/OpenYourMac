@@ -63,15 +63,22 @@ struct CompactActionTile: View {
     }
 }
 
-/// Text-only tile with a title and caption (Overview quick actions).
+/// Tile with an optional glyph, a title, and a caption (Overview quick actions).
 struct QuickActionTile: View {
     let title: String
     let subtitle: String
+    var systemImage: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                        .frame(height: 20)
+                }
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
@@ -83,7 +90,7 @@ struct QuickActionTile: View {
             .padding(.horizontal, 8)
         }
         .buttonStyle(TileButtonStyle(flat: true))
-        .frame(height: 64)
+        .frame(height: systemImage == nil ? 64 : 84)
     }
 }
 

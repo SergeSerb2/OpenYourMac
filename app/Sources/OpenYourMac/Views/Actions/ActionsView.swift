@@ -8,13 +8,51 @@ struct ActionsView: View {
     @EnvironmentObject private var frontmost: FrontmostAppTracker
     @Environment(\.isSnapshot) private var isSnapshot
     @State private var confirmsQuit = false
+    @State private var query = ""
 
     var body: some View {
         PageScaffold(
             title: "Window Actions",
-            subtitle: "Everything the shortcuts do, one click away. Each tile shows its shortcut."
+            subtitle: "Everything the shortcuts do, one click away. Each tile shows its shortcut.",
+            accessory: { SearchField(prompt: "Find an action", text: $query) }
         ) {
             targetBanner
+            if !query.isEmpty {
+                searchResults
+            } else {
+                allSections
+            }
+        }
+        .alert("Quit the window manager?", isPresented: $confirmsQuit) {
+            Button("Quit Window Manager", role: .destructive) { send(.quit) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Window management will stop. You can start it again from Overview or the menu bar.")
+        }
+    }
+
+    @ViewBuilder private var searchResults: some View {
+        let matches = (ShortcutGroup.allCases.flatMap { ActionsTileCatalog.tiles(in: $0) } + [ActionsTileCatalog.printState])
+            .filter { tile in
+                let action = ShortcutCatalog.action(tile.command.bindingName)
+                let keys = config.combos(for: tile.command.bindingName).map(\.displayString)
+                return action?.matches(query, keys: keys + [tile.title, tile.subtitle])
+                    ?? tile.title.localizedCaseInsensitiveContains(query)
+            }
+        if matches.isEmpty {
+            EmptySearchResult(query: query)
+        } else {
+            PageSection("Results", caption: "\(matches.count) \(matches.count == 1 ? "action" : "actions")") {
+                Card(inset: 16) {
+                    TileGrid(columns: 4, spacing: 12) {
+                        ForEach(matches) { tile($0) }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var allSections: some View {
             PageSection("Focus", caption: ShortcutGroup.focus.caption) {
                 focusPad
                 TileGrid(columns: 3, spacing: 12) {
@@ -22,7 +60,11 @@ struct ActionsView: View {
                 }
             }
             ForEach(ShortcutGroup.allCases.filter { $0 != .focus && $0 != .other }) { group in
-                actionSection(group, columns: group == .moveWindow || group == .jumpByNumber ? 3 : 4)
+                if group == .jumpByNumber {
+                    PageSection(group.title, caption: group.caption) { jumpPad }
+                } else {
+                    actionSection(group, columns: group == .moveWindow ? 3 : 4)
+                }
             }
             PageSection("System", caption: "Troubleshooting and stopping") {
                 Card(inset: 16) {
@@ -34,13 +76,51 @@ struct ActionsView: View {
                         .padding(.top, 16)
                 }
             }
+    }
+
+    /// Columns 1–8 and the last column, for focus and for moving the window.
+    private var jumpPad: some View {
+        Card(inset: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                numberRow(title: "Focus column", symbol: "scope", command: { EngineCommand.focus(index: $0) }, last: .focus(.last))
+                CardDivider()
+                numberRow(title: "Move window to", symbol: "arrow.left.arrow.right", command: { EngineCommand.swap(index: $0) }, last: .swap(.last))
+            }
         }
-        .alert("Quit the window manager?", isPresented: $confirmsQuit) {
-            Button("Quit Window Manager", role: .destructive) { send(.quit) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Window management will stop. You can start it again from Overview or the menu bar.")
+    }
+
+    private func numberRow(title: String, symbol: String, command: @escaping (Int) -> EngineCommand, last: EngineCommand) -> some View {
+        HStack(spacing: 12) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 140, alignment: .leading)
+            HStack(spacing: 6) {
+                ForEach(1...8, id: \.self) { number in
+                    numberKey("\(number)", command: command(number))
+                }
+                numberKey("Last", command: last)
+            }
         }
+    }
+
+    private func numberKey(_ label: String, command: EngineCommand) -> some View {
+        let keys = glyphs(for: command)
+        return Button { send(command) } label: {
+            VStack(spacing: 2) {
+                Text(label)
+                    .font(.system(size: label.count > 1 ? 11.5 : 14, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Theme.textPrimary)
+                Text(keys.joined())
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(TileButtonStyle())
+        .help(ShortcutCatalog.action(command.bindingName).map { "\($0.title): \($0.subtitle)" } ?? command.description)
+        .accessibilityLabel(ShortcutCatalog.action(command.bindingName)?.title ?? command.description)
     }
 
     private var targetBanner: some View {

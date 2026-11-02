@@ -61,8 +61,23 @@ final class URLRouter {
                 return
             }
             performLifecycle(verb)
-        case "window":
-            guard let command = EngineCommand.fromURLPath(Array(parts.dropFirst())) else {
+        case "open":
+            // openyourmac://open/<page>[/<section>] shows the window at that page.
+            guard (2...3).contains(parts.count), let page = SidebarPage(urlName: parts[1]) else {
+                reject()
+                return
+            }
+            let section = parts.count == 3 ? parts[2].lowercased() : nil
+            if let section, !section.allSatisfy({ $0.isLetter || $0 == "-" }) {
+                reject()
+                return
+            }
+            state.navigate(to: page, anchor: section)
+        case "window", "strip":
+            let command = verb == "strip"
+                ? (parts.map { $0.lowercased() } == ["strip", "show"] ? EngineCommand.showStrip : nil)
+                : EngineCommand.fromURLPath(Array(parts.dropFirst()))
+            guard let command else {
                 reject()
                 return
             }

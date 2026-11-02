@@ -34,35 +34,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar = StatusBarController(state: state)
         installTerminationHandler()
         observePreferences()
+        state.updates.recordLaunch()
+        let relaunch = UpdateRelaunch.consume()
+        state.updates.prepareForRelaunch = { [weak self] in self?.recordStateForUpdateRelaunch() }
 
         let launchedAtLogin = Self.wasLaunchedAsLoginItem()
         let launchedForURL = router.handledLaunchURL
-        let launchedQuietly = launchedAtLogin || launchedForURL
+        // After an update relaunch, keep the window as the user left it.
+        let launchedQuietly = launchedAtLogin || launchedForURL || (relaunch.map { !$0.showWindow } ?? false)
         if state.preferences.showInDock {
             NSApp.setActivationPolicy(.regular)
         } else {
             NSApp.setActivationPolicy(.accessory)
         }
-        if !launchedQuietly, state.preferences.showWindowOnLaunch || state.showOnboarding {
+        if !launchedQuietly, state.preferences.showWindowOnLaunch || state.showOnboarding || relaunch?.showWindow == true {
             windowController.show()
         }
 
         // A lifecycle URL owns its start/stop decision. Do not counteract a stop URL.
         if !router.handledLifecycleLaunchURL {
-            autoStartIfReady()
+            let restore = relaunch?.engineWasRunning == true
+            autoStartIfReady(restoringRunningEngine: restore)
+            if restore {
+                // The update may need the permission again; start once it is back.
+                state.permissions.waitForGrant { [weak self] in self?.autoStartIfReady(restoringRunningEngine: true) }
+            }
         }
         router.finishLaunching()
         if !launchedQuietly {
             introduceMacSetupIfNeeded()
         }
+        if let from = state.updates.updatedFrom {
+            announceUpdate(from: from)
+        }
         state.updates.start()
+    }
+
+    /// Sparkle is about to quit and relaunch the app with the new version.
+    private func recordStateForUpdateRelaunch() {
+        UpdateRelaunch(
+            engineWasRunning: state.engine.state.isRunning || state.engine.state == .starting,
+            showWindow: state.isMainWindowVisible
+        ).save()
+    }
+
+    /// The first launch of a new version. An ad-hoc-signed update can lose the
+    /// Accessibility permission, so say so plainly instead of failing quietly.
+    private func announceUpdate(from previous: String) {
+        state.permissions.refresh()
+        if state.preferences.onboardingCompleted, !state.permissions.isTrusted {
+            state.navigate(to: .overview)
+            return
+        }
+        if state.isMainWindowVisible {
+            state.toasts.show("Updated to \(AppPaths.appName) \(AppPaths.appVersion)", kind: .success, duration: 4)
+        }
     }
 
     /// Handles a normal SIGTERM through the same bounded quit path as ⌘Q.
     private func installTerminationHandler() {
         Darwin.signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        // Terminate from the run loop, not inside this main-queue block, so the
+        // save before quitting can run.
+        source.setEventHandler {
+            RunLoop.main.perform(inModes: [.common]) { NSApp.terminate(nil) }
+        }
         source.resume()
         terminationSource = source
     }
@@ -72,6 +109,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .dropFirst()
             .sink { [weak self] show in
                 DispatchQueue.main.async { self?.windowController.applyDockVisibility(show) }
+            }
+            .store(in: &subscriptions)
+        // Sparkle's windows belong to this app. Show the Dock icon while they are
+        // open so a menu bar app's update window does not get lost.
+        state.updates.$isPresentingUpdateUI
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] presenting in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.windowController.applyDockVisibility(self.state.preferences.showInDock)
+                    if presenting { NSApp.activate(ignoringOtherApps: true) }
+                }
             }
             .store(in: &subscriptions)
         state.preferences.$onboardingCompleted
@@ -96,9 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func autoStartIfReady() {
+    private func autoStartIfReady(restoringRunningEngine: Bool = false) {
         guard !terminating else { return }
-        state.autoStartIfReady()
+        state.autoStartIfReady(restoringRunningEngine: restoringRunningEngine)
     }
 
     /// True when macOS started the app as a login item.
@@ -117,9 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidHide(_ notification: Notification) {
         windowController.refreshVisibility()
-        if !state.preferences.showInDock {
-            NSApp.setActivationPolicy(.accessory)
-        }
+        windowController.applyDockVisibility(state.preferences.showInDock)
     }
 
     func applicationDidUnhide(_ notification: Notification) {
@@ -132,12 +180,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
         terminating = true
+        // Nothing to save: quit now. This is the usual case, and it does not
+        // depend on the main queue, which a caller may be blocking.
+        guard state.config.hasUnsavedWork else { return .terminateNow }
+        let reply = TerminationReply()
         Task {
             if case .failure(let error) = await state.config.flushForTermination() {
                 NSLog("Could not save configuration before quitting: %@", error.localizedDescription)
             }
-            sender.reply(toApplicationShouldTerminate: true)
+            reply.send()
         }
+        // A terminate request made inside a main-queue block (a signal handler,
+        // an XPC reply) stops Swift tasks from running until it returns. AppKit
+        // still services run loop blocks while it waits, so this reply always
+        // arrives and quitting cannot hang.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 4) { reply.send() }
         return .terminateLater
     }
 
@@ -162,12 +219,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Help menu actions
 
+    @objc fileprivate func goToPage(_ sender: NSMenuItem) {
+        guard SidebarPage.allCases.indices.contains(sender.tag) else { return }
+        state.navigate(to: SidebarPage.allCases[sender.tag])
+    }
+
     @objc fileprivate func showHelp(_ sender: Any?) {
         state.navigate(to: .help)
     }
 
     @objc fileprivate func revealEngineLog(_ sender: Any?) {
         NSWorkspace.shared.activateFileViewerSelecting([AppPaths.engineLog])
+    }
+}
+
+/// Replies once to a delayed termination, through the main run loop.
+private final class TerminationReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sent = false
+
+    func send() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !sent else { return }
+        sent = true
+        let main = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        CFRunLoopWakeUp(main)
+    }
+}
+
+/// What to restore after Sparkle relaunches the app with a new version.
+/// Stored for one launch only.
+struct UpdateRelaunch {
+    var engineWasRunning: Bool
+    var showWindow: Bool
+
+    func save() {
+        let defaults = UserDefaults.standard
+        defaults.set(engineWasRunning, forKey: UpdateChecker.Key.relaunchRestoreEngine)
+        defaults.set(showWindow, forKey: UpdateChecker.Key.relaunchShowWindow)
+    }
+
+    /// Reads and clears the saved state.
+    static func consume() -> UpdateRelaunch? {
+        guard !AppPaths.isSnapshot else { return nil }
+        let defaults = UserDefaults.standard
+        guard let engine = defaults.object(forKey: UpdateChecker.Key.relaunchRestoreEngine) as? Bool else { return nil }
+        let show = defaults.bool(forKey: UpdateChecker.Key.relaunchShowWindow)
+        defaults.removeObject(forKey: UpdateChecker.Key.relaunchRestoreEngine)
+        defaults.removeObject(forKey: UpdateChecker.Key.relaunchShowWindow)
+        return UpdateRelaunch(engineWasRunning: engine, showWindow: show)
     }
 }
 
@@ -197,7 +301,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     /// Shows the Dock icon when the preference asks for it or the window is open.
     func applyDockVisibility(_ show: Bool) {
-        NSApp.setActivationPolicy(show || (window?.isVisible == true && !NSApp.isHidden) ? .regular : .accessory)
+        let windowOpen = window?.isVisible == true && !NSApp.isHidden
+        NSApp.setActivationPolicy(show || windowOpen || state.updates.isPresentingUpdateUI ? .regular : .accessory)
     }
 
     /// Closing only hides the window, so its state survives.
@@ -252,6 +357,7 @@ enum MainMenu {
         let main = NSMenu()
         main.addItem(submenuItem(makeAppMenu()))
         main.addItem(submenuItem(makeEditMenu()))
+        main.addItem(submenuItem(makeGoMenu()))
         let windowMenu = makeWindowMenu()
         main.addItem(submenuItem(windowMenu))
         NSApp.windowsMenu = windowMenu
@@ -291,6 +397,17 @@ enum MainMenu {
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        return menu
+    }
+
+    /// ⌘1…⌘6 open each page, in sidebar order.
+    private static func makeGoMenu() -> NSMenu {
+        let menu = NSMenu(title: "Go")
+        for (index, page) in SidebarPage.allCases.enumerated() {
+            let item = menu.addItem(withTitle: page.title, action: #selector(AppDelegate.goToPage(_:)), keyEquivalent: "\(page.shortcutNumber)")
+            item.tag = index
+            item.target = NSApp.delegate
+        }
         return menu
     }
 

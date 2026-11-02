@@ -98,6 +98,15 @@ pub struct VirtualWorkspaceState {
     pub number: u32,
     pub native_workspace_id: u64,
     pub active: bool,
+    /// Shown on its display now: the display's selected virtual workspace on
+    /// the Space it shows. With several displays, more than one can be visible;
+    /// only one is `active`.
+    #[serde(default)]
+    pub visible: bool,
+    /// The display that owns this strip. Off-screen windows can be parked on a
+    /// neighbouring display, so their `display_id` does not say this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_id: Option<u32>,
     pub windows: Vec<WindowState>,
 }
 
@@ -127,6 +136,11 @@ pub struct WindowState {
     /// hidden, and showing more than the sliver Paneru leaves poking out for
     /// off-screen windows.
     pub visible: bool,
+    /// 1-based strip column, left to right. `None` for floating windows.
+    /// Off-screen windows are parked at a display edge, so `frame` does not
+    /// show their place in the strip; this does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 impl QueryState {
@@ -290,6 +304,7 @@ mod tests {
                     height: 600,
                 }),
                 visible: true,
+                column: None,
             }],
             active: ActiveState::default(),
         };
@@ -323,6 +338,7 @@ mod tests {
                 height: 100,
             }),
             visible,
+            column: None,
         };
 
         let state = QueryState {
@@ -333,6 +349,8 @@ mod tests {
                 number: 1,
                 native_workspace_id: 1,
                 active: true,
+                visible: true,
+                display_id: Some(1),
                 windows: vec![
                     window(1, 500, true),
                     window(2, 0, false),

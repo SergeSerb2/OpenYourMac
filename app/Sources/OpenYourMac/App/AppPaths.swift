@@ -74,6 +74,7 @@ enum AppPaths {
 
     static var repositoryURL: URL { URL(string: "https://github.com/\(repository)")! }
     static var issuesURL: URL { URL(string: "https://github.com/\(repository)/issues/new")! }
+    static var releaseNotesURL: URL { URL(string: "https://github.com/\(repository)/blob/main/CHANGELOG.md")! }
     static var setupGuideURL: URL { URL(string: "https://github.com/\(repository)/blob/main/docs/setup.md")! }
     static let paneruURL = URL(string: "https://github.com/karinushka/paneru")!
 
