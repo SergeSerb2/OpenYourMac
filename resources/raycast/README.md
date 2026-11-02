@@ -89,6 +89,7 @@ Direction values are `west`, `east`, `north`, `south`, `first`, and `last`.
 | `openyourmac://window/pin/<left\|right>` | Pin the active column to that edge, or unpin it. |
 | `openyourmac://strip/show` | Show the strip minimap. |
 | `openyourmac://open/<page>` | Open the app window at a page: `overview`, `actions`, `shortcuts`, `settings`, `setup`, or `help`. |
+| `openyourmac://open/settings/<section>` | Open Configuration at a section: `general`, `updates`, `displays`, `layout`, `widths`, `appearance`, `gestures`, `behavior`, or `rules`. Help accepts `shortcuts`, `settings`, `integrations`, and `about`. |
 
 Use `open -g` so the URL runs in the background:
 

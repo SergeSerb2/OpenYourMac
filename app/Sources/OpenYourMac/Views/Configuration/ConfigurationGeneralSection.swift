@@ -5,7 +5,7 @@ struct ConfigurationGeneralSection: View {
     @EnvironmentObject private var loginItem: LoginItemManager
 
     var body: some View {
-        PageSection("General", caption: "Startup and appearance. These apply immediately.") {
+        PageSection("General", caption: "Startup and the Dock. These apply immediately.") {
             Card {
                 LoginItemSettingRow()
                 if let error = loginItem.lastError {

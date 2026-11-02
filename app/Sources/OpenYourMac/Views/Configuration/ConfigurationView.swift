@@ -12,6 +12,7 @@ struct ConfigurationView: View {
             title: "Configuration",
             subtitle: "Customize how \(AppPaths.appName) manages your windows. Changes save and apply as you make them; other settings in your file stay untouched."
         ) {
+            ConfigurationJumpBar()
             ConfigurationDiagnostics()
             if !config.optionOverrides.isEmpty {
                 Card(inset: 16) {
@@ -27,15 +28,15 @@ struct ConfigurationView: View {
             }
             ScrollViewReader { proxy in
                 VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
-                    ConfigurationGeneralSection()
-                    ConfigurationUpdatesSection()
-                    ConfigurationDisplaysSection()
-                    ConfigurationLayoutSection()
-                    PresetWidthsEditor()
-                    ConfigurationAppearanceSection()
-                    ConfigurationGesturesSection()
-                    ConfigurationBehaviorSection()
-                    ConfigurationRulesSection()
+                    ConfigurationGeneralSection().id("general")
+                    ConfigurationUpdatesSection().id("updates")
+                    ConfigurationDisplaysSection().id("displays")
+                    ConfigurationLayoutSection().id("layout")
+                    PresetWidthsEditor().id("widths")
+                    ConfigurationAppearanceSection().id("appearance")
+                    ConfigurationGesturesSection().id("gestures")
+                    ConfigurationBehaviorSection().id("behavior")
+                    ConfigurationRulesSection().id("rules")
                     ConfigurationFooter()
                 }
                 .onAppear { scrollToPendingAnchor(proxy) }
@@ -158,5 +159,57 @@ struct ConfigurationDiagnostics: View {
         ForEach(Array((config.warnings + config.engineBindingWarnings).enumerated()), id: \.offset) { _, warning in
             ConfigurationInlineMessage(text: warning.localizedDescription, tint: Theme.warning)
         }
+    }
+}
+
+/// Chips under the title that scroll to each section.
+private struct ConfigurationJumpBar: View {
+    @EnvironmentObject private var state: AppState
+
+    private static let sections: [(id: String, title: String, symbol: String)] = [
+        ("general", "General", "gearshape"),
+        ("updates", "Updates", "arrow.triangle.2.circlepath"),
+        ("displays", "Displays", "display"),
+        ("layout", "Layout", "rectangle.split.3x1"),
+        ("widths", "Widths", "arrow.left.and.right"),
+        ("appearance", "Appearance", "paintbrush"),
+        ("gestures", "Gestures", "hand.draw"),
+        ("behavior", "Behavior", "switch.2"),
+        ("rules", "Rules", "list.bullet.rectangle"),
+    ]
+
+    var body: some View {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
+            ForEach(Self.sections, id: \.id) { section in
+                JumpChip(title: section.title, symbol: section.symbol) {
+                    state.pendingAnchor = section.id
+                }
+            }
+        }
+        .padding(.top, -6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Jump to section")
+    }
+}
+
+private struct JumpChip: View {
+    let title: String
+    let symbol: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(hovering ? Theme.accent : Theme.textPrimary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(hovering ? Theme.accentSofter : Theme.tileFill))
+                .overlay(Capsule().strokeBorder(Theme.cardStroke, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

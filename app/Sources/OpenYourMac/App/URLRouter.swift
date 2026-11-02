@@ -62,12 +62,17 @@ final class URLRouter {
             }
             performLifecycle(verb)
         case "open":
-            // openyourmac://open/<page> shows the window at that page.
-            guard parts.count == 2, let page = SidebarPage(urlName: parts[1]) else {
+            // openyourmac://open/<page>[/<section>] shows the window at that page.
+            guard (2...3).contains(parts.count), let page = SidebarPage(urlName: parts[1]) else {
                 reject()
                 return
             }
-            state.navigate(to: page)
+            let section = parts.count == 3 ? parts[2].lowercased() : nil
+            if let section, !section.allSatisfy({ $0.isLetter || $0 == "-" }) {
+                reject()
+                return
+            }
+            state.navigate(to: page, anchor: section)
         case "window", "strip":
             let command = verb == "strip"
                 ? (parts.map { $0.lowercased() } == ["strip", "show"] ? EngineCommand.showStrip : nil)

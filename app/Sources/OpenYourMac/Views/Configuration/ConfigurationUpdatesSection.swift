@@ -35,7 +35,6 @@ struct ConfigurationUpdatesSection: View {
                 .padding(.vertical, 11)
             }
         }
-        .id("updates")
     }
 }
 
