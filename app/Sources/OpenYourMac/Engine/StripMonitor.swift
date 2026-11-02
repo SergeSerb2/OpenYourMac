@@ -37,10 +37,12 @@ struct EngineSnapshot: Decodable, Equatable {
         var number: Int
         var nativeWorkspaceID: UInt64
         var active: Bool
+        /// Shown on its display now. Engines before this field omit it.
+        var visible: Bool?
         var windows: [Window]
 
         enum CodingKeys: String, CodingKey {
-            case number, nativeWorkspaceID = "native_workspace_id", active, windows
+            case number, nativeWorkspaceID = "native_workspace_id", active, visible, windows
         }
     }
 
@@ -82,28 +84,33 @@ struct StripLayout: Equatable, Identifiable {
         return lower...max(upper, lower + 1)
     }
 
-    /// Builds one layout per display from the active workspaces.
+    /// Builds one layout per display from the workspace each display shows.
     static func layouts(from snapshot: EngineSnapshot) -> [StripLayout] {
-        var result: [StripLayout] = []
-        for workspace in snapshot.virtualWorkspaces where workspace.active {
-            let byDisplay = Dictionary(grouping: workspace.windows.filter { $0.displayID != nil && $0.frame != nil }) { $0.displayID! }
-            for (displayID, windows) in byDisplay {
-                let viewport = CGDisplayBounds(displayID)
-                let tiled = windows.filter { !$0.floating }
-                let columns = tiled.allSatisfy({ $0.column != nil })
-                    ? logicalColumns(tiled, viewport: viewport)
-                    : columnsByFrame(tiled)
-                result.append(StripLayout(
-                    displayID: displayID,
-                    displayName: Self.name(of: displayID),
-                    viewport: viewport.isEmpty ? (columns.first?.frame ?? .zero) : viewport,
-                    columns: columns,
-                    floating: windows.filter { $0.floating && $0.bundleID != AppPaths.bundleIdentifier },
-                    workspaceNumber: workspace.number
-                ))
-            }
+        // Every display shows one workspace. `active` marks only the one with
+        // keyboard focus, so use `visible` as well when the engine reports it.
+        var result: [UInt32: StripLayout] = [:]
+        for workspace in snapshot.virtualWorkspaces where workspace.active || workspace.visible == true {
+            let placed = workspace.windows.filter { $0.displayID != nil && $0.frame != nil }
+            // A workspace belongs to one display. Parked windows can poke onto a
+            // neighbour, so use the display most of its windows are on.
+            let counts = Dictionary(grouping: placed) { $0.displayID! }.mapValues(\.count)
+            guard let displayID = counts.max(by: { $0.value < $1.value })?.key else { continue }
+            if result[displayID] != nil, !workspace.active { continue }
+            let viewport = CGDisplayBounds(displayID)
+            let tiled = placed.filter { !$0.floating }
+            let columns = tiled.allSatisfy({ $0.column != nil })
+                ? logicalColumns(tiled, viewport: viewport)
+                : columnsByFrame(tiled)
+            result[displayID] = StripLayout(
+                displayID: displayID,
+                displayName: Self.name(of: displayID),
+                viewport: viewport.isEmpty ? (columns.first?.frame ?? .zero) : viewport,
+                columns: columns,
+                floating: placed.filter { $0.floating && $0.bundleID != AppPaths.bundleIdentifier },
+                workspaceNumber: workspace.number
+            )
         }
-        return result.sorted { $0.viewport.minX < $1.viewport.minX }
+        return result.values.sorted { $0.viewport.minX < $1.viewport.minX }
     }
 
     /// Places columns by strip order. Off-screen windows are parked at a display
@@ -216,16 +223,20 @@ final class StripMonitor: ObservableObject {
         Task { await refresh() }
     }
 
-    /// Focuses a column from the map.
+    /// Focuses a column from the map or the menu. Bindings address columns 1–8,
+    /// so later columns are reached from column 8, one step east at a time.
     func focus(_ column: StripLayout.Column, in layout: StripLayout) {
         guard let engine else { return }
         let isLast = column.number == layout.columns.map(\.number).max()
-        let command: EngineCommand? = isLast ? .focus(.last) : (column.number <= 8 ? .focus(index: column.number) : nil)
         Task {
-            if let command {
-                await engine.send(command)
-            } else if let bundleID = column.windows.first?.bundleID {
-                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.activate()
+            if isLast {
+                await engine.send(.focus(.last))
+            } else if column.number <= 8 {
+                await engine.send(.focus(index: column.number))
+            } else if case .success = await engine.send(.focus(index: 8)) {
+                for _ in 0..<(column.number - 8) {
+                    guard case .success = await engine.send(.focus(.east)) else { break }
+                }
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
             await refresh()

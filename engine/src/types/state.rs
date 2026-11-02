@@ -98,6 +98,11 @@ pub struct VirtualWorkspaceState {
     pub number: u32,
     pub native_workspace_id: u64,
     pub active: bool,
+    /// Shown on its display now: the display's selected virtual workspace on
+    /// the Space it shows. With several displays, more than one can be visible;
+    /// only one is `active`.
+    #[serde(default)]
+    pub visible: bool,
     pub windows: Vec<WindowState>,
 }
 
@@ -340,6 +345,7 @@ mod tests {
                 number: 1,
                 native_workspace_id: 1,
                 active: true,
+                visible: true,
                 windows: vec![
                     window(1, 500, true),
                     window(2, 0, false),

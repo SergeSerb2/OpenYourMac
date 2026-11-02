@@ -875,6 +875,15 @@ impl QueryState for PaneruQueryState {
                 number,
                 native_workspace_id: strip.id(),
                 active: active_workspace,
+                // Another display shows this strip when it is that display's
+                // selected virtual workspace on the Space the display shows now.
+                visible: active_workspace
+                    || selected_workspace
+                        && displays.get(child.parent()).is_ok_and(|(display, _, _)| {
+                            window_manager
+                                .active_display_space(display.id())
+                                .is_ok_and(|space| space == strip.id())
+                        }),
                 windows: row_windows,
             });
 
@@ -897,6 +906,7 @@ impl QueryState for PaneruQueryState {
                         number,
                         native_workspace_id: workspace_id,
                         active: false,
+                        visible: false,
                         windows: Vec::new(),
                     });
                 }
