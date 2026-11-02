@@ -95,7 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installTerminationHandler() {
         Darwin.signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        // Terminate from the run loop, not inside this main-queue block, so the
+        // save before quitting can run.
+        source.setEventHandler {
+            RunLoop.main.perform(inModes: [.common]) { NSApp.terminate(nil) }
+        }
         source.resume()
         terminationSource = source
     }
@@ -176,12 +180,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
         terminating = true
+        // Nothing to save: quit now. This is the usual case, and it does not
+        // depend on the main queue, which a caller may be blocking.
+        guard state.config.hasUnsavedWork else { return .terminateNow }
+        let reply = TerminationReply()
         Task {
             if case .failure(let error) = await state.config.flushForTermination() {
                 NSLog("Could not save configuration before quitting: %@", error.localizedDescription)
             }
-            sender.reply(toApplicationShouldTerminate: true)
+            reply.send()
         }
+        // A terminate request made inside a main-queue block (a signal handler,
+        // an XPC reply) stops Swift tasks from running until it returns. AppKit
+        // still services run loop blocks while it waits, so this reply always
+        // arrives and quitting cannot hang.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 4) { reply.send() }
         return .terminateLater
     }
 
@@ -217,6 +230,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc fileprivate func revealEngineLog(_ sender: Any?) {
         NSWorkspace.shared.activateFileViewerSelecting([AppPaths.engineLog])
+    }
+}
+
+/// Replies once to a delayed termination, through the main run loop.
+private final class TerminationReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sent = false
+
+    func send() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !sent else { return }
+        sent = true
+        let main = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        CFRunLoopWakeUp(main)
     }
 }
 

@@ -45,6 +45,11 @@ final class ConfigStore: ObservableObject {
     private var validationGeneration = 0
     private var pendingOptions: [PartialKeyPath<ConfigOptions>: ConfigDocument.Value] = [:]
     private var optionSaveWork: DispatchWorkItem?
+    /// Edits queued or writing. Quitting waits only when this or a pending slider change exists.
+    private var editsInFlight = 0
+
+    /// True when quitting now could lose a change the user made.
+    var hasUnsavedWork: Bool { editsInFlight > 0 || !pendingOptions.isEmpty || optionSaveWork != nil }
 
     init(fileURL: URL = AppPaths.configFile) {
         self.fileURL = fileURL
@@ -461,10 +466,12 @@ final class ConfigStore: ObservableObject {
     private func enqueueEdit(allowMissing: Bool = false, keepBackup: Bool = false, completion: (() -> Void)? = nil,
                              _ change: @escaping (inout ConfigDocument) throws -> Void) -> Task<Result<URL?, ConfigError>, Never> {
         let previous = writeTask
+        editsInFlight += 1
         let task = Task { [self] in
             _ = await previous?.value
             let result = await performEdit(allowMissing: allowMissing, keepBackup: keepBackup, change)
             completion?()
+            editsInFlight -= 1
             return result
         }
         writeTask = task
