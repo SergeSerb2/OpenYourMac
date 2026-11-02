@@ -61,6 +61,19 @@ final class URLRouter {
                 return
             }
             performLifecycle(verb)
+        case "pause":
+            // openyourmac://pause/<minutes>, 1–1440.
+            guard parts.count == 2, let minutes = Int(parts[1]), (1...1440).contains(minutes) else {
+                reject()
+                return
+            }
+            state.pause(minutes: minutes)
+        case "resume":
+            guard parts.count == 1 else {
+                reject()
+                return
+            }
+            state.resumeFromPause()
         case "open":
             // openyourmac://open/<page>[/<section>] shows the window at that page.
             guard (2...3).contains(parts.count), let page = SidebarPage(urlName: parts[1]) else {
@@ -107,7 +120,7 @@ final class URLRouter {
         let canStart = state.permissions.isTrusted && state.preferences.onboardingCompleted
         switch verb {
         case "stop":
-            engine.stop()
+            state.stopEngineByUser()
         case "start":
             if canStart {
                 engine.start()
@@ -118,7 +131,7 @@ final class URLRouter {
             }
         case "toggle":
             if engine.state.isRunning || engine.state == .starting {
-                engine.stop()
+                state.stopEngineByUser()
             } else if canStart {
                 engine.start()
             }

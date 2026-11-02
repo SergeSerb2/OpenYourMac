@@ -11,6 +11,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - A live map of each display's strip on Overview. Click a column to focus it.
+- Pause the window manager for 5 minutes to 1 hour from the menu bar, or with
+  `openyourmac://pause/<minutes>`. It starts again by itself.
 - Workspace chips on the live map that switch virtual workspaces.
 - Right-click a window on the live map to make its app always float or tile.
 - The last onboarding step shows the user's own strip.

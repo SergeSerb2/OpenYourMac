@@ -88,6 +88,11 @@ final class AppState: ObservableObject {
     @Published var isMainWindowVisible = false
     /// Set by Help links to scroll a page to a section after switching.
     @Published var pendingAnchor: String?
+    /// While set, the window manager is stopped and starts again at this time.
+    @Published private(set) var pausedUntil: Date?
+    private var resumeTask: Task<Void, Never>?
+    /// A resume waiting for the pause's stop to finish.
+    private var pendingResume: Task<Void, Never>?
 
     /// Called by the window controller to show the main window.
     var openMainWindow: () -> Void = {}
@@ -108,6 +113,17 @@ final class AppState: ObservableObject {
                 self?.setup.setMainWindowVisible(visible)
                 self?.engine.setMainWindowVisible(visible)
                 self?.strip.setWindowVisible(visible)
+            }
+            .store(in: &subscriptions)
+        // Starting by hand, or a failure, ends a pause.
+        engine.$state
+            .removeDuplicates()
+            .sink { [weak self] state in
+                guard let self, self.pausedUntil != nil else { return }
+                switch state {
+                case .running, .starting, .failed: self.endPause()
+                default: break
+                }
             }
             .store(in: &subscriptions)
         permissions.$isTrusted
@@ -132,6 +148,69 @@ final class AppState: ObservableObject {
 
     /// Starts the engine when everything it needs is ready. After an update
     /// relaunch, a running engine is restored even if automatic start is off.
+    // MARK: Pause
+
+    /// Stops arranging windows for a while, for example during screen sharing,
+    /// then starts again by itself. Starting or stopping by hand ends the pause.
+    func pause(minutes: Int) {
+        guard !AppPaths.isSnapshot, (1...1440).contains(minutes),
+              engine.state.isRunning || engine.state == .starting else { return }
+        let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        pendingResume?.cancel()
+        pendingResume = nil
+        engine.stop()
+        pausedUntil = until
+        resumeTask?.cancel()
+        resumeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(minutes) * 60 * 1_000_000_000)
+            guard !Task.isCancelled, let self, self.pausedUntil == until else { return }
+            self.resumeFromPause()
+        }
+        toasts.show("Paused until \(Self.timeFormatter.string(from: until))", kind: .info)
+    }
+
+    /// Ends a pause now and starts the window manager when it is allowed to run.
+    /// The pause's own stop can still be finishing, so wait for it first.
+    func resumeFromPause() {
+        guard pausedUntil != nil else { return }
+        endPause()
+        pendingResume?.cancel()
+        pendingResume = Task { [weak self] in
+            for _ in 0..<50 {
+                guard let self, self.engine.state == .stopping else { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            // A stop or a new pause since then cancels this resume.
+            guard !Task.isCancelled, let self else { return }
+            self.permissions.refresh()
+            guard self.permissions.isTrusted, self.preferences.onboardingCompleted,
+                  self.engine.state == .stopped else { return }
+            self.engine.start()
+        }
+    }
+
+    /// A stop the user asked for. It also ends a pause, so the window manager
+    /// does not start again at the pause's end.
+    func stopEngineByUser() {
+        endPause()
+        pendingResume?.cancel()
+        pendingResume = nil
+        engine.stop()
+    }
+
+    private func endPause() {
+        pausedUntil = nil
+        resumeTask?.cancel()
+        resumeTask = nil
+    }
+
+    static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
     func autoStartIfReady(restoringRunningEngine: Bool = false) {
         setup.refresh()
         guard !AppPaths.isSnapshot, preferences.startEngineAutomatically || restoringRunningEngine,

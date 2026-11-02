@@ -83,6 +83,10 @@ struct SidebarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    private var statusColor: Color {
+        state.pausedUntil == nil ? engine.state.statusColor : Theme.warning
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
             BrandMark(size: 34)
@@ -91,15 +95,15 @@ struct SidebarView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
                 HStack(spacing: 5) {
-                    StatusDot(color: engine.state.statusColor, size: 6)
+                    StatusDot(color: statusColor, size: 6)
                         .background {
                             if engine.state.isRunning {
                                 PulseRing(color: engine.state.statusColor)
                             }
                         }
-                    Text(engine.state.sidebarLabel)
+                    Text(state.pausedUntil == nil ? engine.state.sidebarLabel : "Paused")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(engine.state.statusColor)
+                        .foregroundStyle(statusColor)
                 }
             }
         }
@@ -196,7 +200,7 @@ private struct EnginePowerCard: View {
             Spacer(minLength: 0)
             Toggle("Window Manager", isOn: Binding(
                 get: { engine.state.isRunning || engine.state == .starting },
-                set: { on in on ? state.startEngineFromUI() : engine.stop() }
+                set: { on in on ? state.startEngineFromUI() : state.stopEngineByUser() }
             ))
             .toggleStyle(.switch)
             .labelsHidden()
@@ -219,7 +223,8 @@ private struct EnginePowerCard: View {
         case .running: return "Arranging windows"
         case .starting: return "Starting…"
         case .stopping: return "Stopping…"
-        case .stopped: return "Off"
+        case .stopped:
+            return state.pausedUntil.map { "Paused until \(AppState.timeFormatter.string(from: $0))" } ?? "Off"
         case .failed: return "Needs attention"
         }
     }
