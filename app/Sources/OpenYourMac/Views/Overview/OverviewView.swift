@@ -9,28 +9,15 @@ struct OverviewView: View {
     @EnvironmentObject private var setup: MacSetupChecker
     @EnvironmentObject private var preferences: Preferences
     @EnvironmentObject private var config: ConfigStore
+    @EnvironmentObject private var updates: UpdateChecker
 
     var body: some View {
         PageScaffold(
             title: headline,
             subtitle: subheadline,
             titleDot: engine.state.statusColor,
-            accessory: { startStopButton }
+            accessory: { headerButtons }
         ) {
-            HStack(spacing: 10) {
-                StatusCard(label: "Window Manager", value: engine.state.label, color: engine.state.statusColor)
-                StatusCard(
-                    label: "Permission",
-                    value: permissions.isTrusted ? "Allowed" : "Missing",
-                    color: permissions.isTrusted ? Theme.success : Theme.danger
-                )
-                StatusCard(
-                    label: "Mac Setup",
-                    value: setup.allPassing ? "Ready" : "\(setup.failing.count) to fix",
-                    color: setup.allPassing ? Theme.success : Theme.warning
-                )
-            }
-
             if !permissions.isTrusted {
                 FinishSettingUpCard()
             } else if case .failed(let failure) = engine.state {
@@ -38,6 +25,33 @@ struct OverviewView: View {
             }
 
             OverviewUpdateBanner()
+
+            PageSection("Your Strip", caption: "A live map of your windows. The dashed frame is your screen. Click a column to focus it.") {
+                Card(inset: 14) {
+                    LiveStripView()
+                }
+            }
+
+            HStack(spacing: 10) {
+                HealthTile(
+                    symbol: permissions.isTrusted ? "hand.raised.fill" : "hand.raised.slash.fill",
+                    label: "Accessibility",
+                    value: permissions.isTrusted ? "Allowed" : "Missing",
+                    color: permissions.isTrusted ? Theme.success : Theme.danger
+                ) { state.navigate(to: .macSetup) }
+                HealthTile(
+                    symbol: "checklist",
+                    label: "Mac Setup",
+                    value: setup.allPassing ? "All set" : "\(setup.failing.count) to fix",
+                    color: setup.allPassing ? Theme.success : Theme.warning
+                ) { state.navigate(to: .macSetup) }
+                HealthTile(
+                    symbol: "arrow.triangle.2.circlepath",
+                    label: "Updates",
+                    value: updates.phase.update.map { "\($0.version) available" } ?? "Version \(AppPaths.appVersion)",
+                    color: updates.phase.update == nil ? Theme.success : Theme.accent
+                ) { state.navigate(to: .configuration, anchor: "updates") }
+            }
 
             if !preferences.gettingStartedDismissed {
                 PageSection("Getting Started", caption: "The five shortcuts you need. Everything else is in Help.") {
@@ -48,17 +62,17 @@ struct OverviewView: View {
             PageSection("Quick Actions", caption: "Common things, one click away") {
                 Card(inset: 14) {
                     HStack(spacing: 8) {
-                        QuickActionTile(title: "Restart", subtitle: "Restart the window manager") {
-                            if engine.state.isRunning { state.restartEngineFromUI() } else { state.startEngineFromUI() }
+                        QuickActionTile(title: "Show Strip", subtitle: "Open the minimap", systemImage: "rectangle.split.3x1") {
+                            state.perform(.showStrip)
                         }
-                        QuickActionTile(title: "Settings", subtitle: "Configuration") {
+                        QuickActionTile(title: "Settings", subtitle: "Gaps, widths, rules", systemImage: "slider.horizontal.3") {
                             state.page = .configuration
                         }
-                        QuickActionTile(title: "Shortcuts", subtitle: "Change your keys") {
+                        QuickActionTile(title: "Shortcuts", subtitle: "Change your keys", systemImage: "command") {
                             state.page = .shortcuts
                         }
-                        QuickActionTile(title: "Permission", subtitle: "Accessibility settings") {
-                            permissions.openAccessibilitySettings()
+                        QuickActionTile(title: "Edit Config", subtitle: "Open the TOML file", systemImage: "doc.text") {
+                            config.openInEditor()
                         }
                     }
                 }
@@ -89,13 +103,80 @@ struct OverviewView: View {
         }
     }
 
-    private var startStopButton: some View {
-        Button(engine.state.isRunning ? "Stop" : "Start") {
-            engine.state.isRunning ? engine.stop() : state.startEngineFromUI()
+    private var headerButtons: some View {
+        HStack(spacing: 8) {
+            if engine.state.isRunning {
+                Button {
+                    state.restartEngineFromUI()
+                } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(engine.state.isBusy)
+                Button {
+                    engine.stop()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(engine.state.isBusy)
+            } else {
+                Button {
+                    state.startEngineFromUI()
+                } label: {
+                    Label("Start", systemImage: "play.fill")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(engine.state.isBusy)
+                .keyboardShortcut(.defaultAction)
+            }
         }
-        .buttonStyle(SecondaryButtonStyle())
-        .disabled(engine.state.isBusy)
-        .keyboardShortcut(.defaultAction)
+    }
+}
+
+/// A small status tile that opens the page where you can act on it.
+private struct HealthTile: View {
+    let symbol: String
+    let label: String
+    let value: String
+    let color: Color
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                IconDisc(systemImage: symbol, diameter: 30, tint: color)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(value)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary.opacity(hovering ? 1 : 0.5))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .fill(hovering ? Theme.tileFillHover : Theme.cardFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .strokeBorder(Theme.cardStroke, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(label): \(value)")
     }
 }
 

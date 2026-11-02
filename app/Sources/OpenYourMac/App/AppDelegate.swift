@@ -206,6 +206,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Help menu actions
 
+    @objc fileprivate func goToPage(_ sender: NSMenuItem) {
+        guard SidebarPage.allCases.indices.contains(sender.tag) else { return }
+        state.navigate(to: SidebarPage.allCases[sender.tag])
+    }
+
     @objc fileprivate func showHelp(_ sender: Any?) {
         state.navigate(to: .help)
     }
@@ -321,6 +326,7 @@ enum MainMenu {
         let main = NSMenu()
         main.addItem(submenuItem(makeAppMenu()))
         main.addItem(submenuItem(makeEditMenu()))
+        main.addItem(submenuItem(makeGoMenu()))
         let windowMenu = makeWindowMenu()
         main.addItem(submenuItem(windowMenu))
         NSApp.windowsMenu = windowMenu
@@ -360,6 +366,17 @@ enum MainMenu {
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        return menu
+    }
+
+    /// ⌘1…⌘6 open each page, in sidebar order.
+    private static func makeGoMenu() -> NSMenu {
+        let menu = NSMenu(title: "Go")
+        for (index, page) in SidebarPage.allCases.enumerated() {
+            let item = menu.addItem(withTitle: page.title, action: #selector(AppDelegate.goToPage(_:)), keyEquivalent: "\(page.shortcutNumber)")
+            item.tag = index
+            item.target = NSApp.delegate
+        }
         return menu
     }
 
