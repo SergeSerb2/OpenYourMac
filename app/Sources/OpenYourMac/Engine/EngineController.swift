@@ -384,6 +384,7 @@ final class EngineController: ObservableObject {
     }
 
     private func transition(_ next: EngineState) {
+        let changed = state != next
         state = next
         if next == .running { startWatchdog() } else if next != .starting { stopWatchdog() }
         switch next {
@@ -391,6 +392,7 @@ final class EngineController: ObservableObject {
         case .stopped where !restartAfterStop: finishRestart(with: next)
         default: break
         }
+        guard changed else { return }
         var line = "[OpenYourMac] State: \(next.label)"
         if case .failed(let reason) = next {
             line += " (\(reason))"

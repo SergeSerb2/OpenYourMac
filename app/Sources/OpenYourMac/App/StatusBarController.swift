@@ -77,7 +77,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     /// The strip glyph, with a small dot when an update waits for the user.
-    private static func statusImage(badged: Bool) -> NSImage? {
+    private static func statusImage(badged: Bool, note: String = "update available") -> NSImage? {
         let name = AppPaths.appName
         guard let symbol = NSImage(systemSymbolName: "rectangle.3.offgrid", accessibilityDescription: name)
             ?? NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: name) else { return nil }
@@ -95,7 +95,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "\(name), update available"
+        image.accessibilityDescription = "\(name), \(note)"
         return image
     }
 
@@ -117,8 +117,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let engineState = state.engine.state
         item.button?.appearsDisabled = !engineState.isRunning
         let updates = state.updates
-        let badged = updates.hasUnseenUpdate || { if case .readyToInstall = updates.phase { return true } else { return false } }()
-        item.button?.image = Self.statusImage(badged: badged)
+        let failed: Bool = { if case .failed = engineState { return true } else { return false } }()
+        let badged = failed || updates.hasUnseenUpdate || { if case .readyToInstall = updates.phase { return true } else { return false } }()
+        item.button?.image = Self.statusImage(badged: badged, note: failed ? "needs attention" : "update available")
 
         add(AppPaths.appName, to: menu, enabled: false)
         add("Status: \(engineState.label)", to: menu, enabled: false)
