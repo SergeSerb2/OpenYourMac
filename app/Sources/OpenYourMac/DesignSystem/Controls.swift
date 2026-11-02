@@ -660,3 +660,77 @@ struct ShortcutCapsule: View {
         return Color.primary.opacity(hovering ? 0.22 : 0.14)
     }
 }
+
+// MARK: - Search
+
+/// Rounded filter field for long pages. Esc clears it.
+struct SearchField: View {
+    let prompt: String
+    @Binding var text: String
+    var width: CGFloat = 220
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .focused($focused)
+                .onExitCommand { text = "" }
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .frame(width: width)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.tileFill))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.cardStroke, lineWidth: focused ? 1.5 : 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(prompt)
+    }
+}
+
+/// "Nothing matches" placeholder for filtered lists.
+struct EmptySearchResult: View {
+    let query: String
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 20))
+                .foregroundStyle(Theme.textSecondary)
+            Text("Nothing matches “\(query)”")
+                .font(Theme.Font.rowTitleEmphasis)
+                .foregroundStyle(Theme.textPrimary)
+            Text("Try a shorter word, such as “focus”, “stack”, or a key like “T”.")
+                .font(Theme.Font.rowSubtitle)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+}
+
+extension ShortcutAction {
+    /// True when the title, description, or one of `keys` contains every word of `query`.
+    func matches(_ query: String, keys: [String] = []) -> Bool {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return true }
+        let haystack = ([title, subtitle, group.title, id.replacingOccurrences(of: "_", with: " ")] + keys)
+            .joined(separator: " ").lowercased()
+        return words.allSatisfy { haystack.contains($0) }
+    }
+}

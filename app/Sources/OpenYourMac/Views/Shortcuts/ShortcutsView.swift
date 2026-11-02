@@ -9,12 +9,17 @@ struct ShortcutsView: View {
     @StateObject private var recorder = ShortcutsRecorder()
     @AppStorage("shortcuts.legacyOptionBannerDismissed") private var migrationDismissed = false
     @State private var activeAlert: ShortcutsAlert?
+    @State private var query = ""
 
     var body: some View {
-        PageScaffold(title: "Keyboard Shortcuts", subtitle: "Click a shortcut and press the keys you want. Changes save by themselves.") {
+        PageScaffold(
+            title: "Keyboard Shortcuts",
+            subtitle: "Click a shortcut and press the keys you want. Changes save by themselves.",
+            accessory: { SearchField(prompt: "Filter shortcuts", text: $query) }
+        ) {
             ConfigurationDiagnostics()
             if let error = recorder.error { ConfigurationInlineMessage(text: error, tint: Theme.danger) }
-            instructions
+            if query.isEmpty { instructions }
             if !config.canCheckAllShortcutConflicts {
                 Card(inset: 16) {
                     ConfigurationFileOnlyRow(keys: config.hasOpaqueBindingTable ? ["bindings"] : config.handEditedBindings.sorted())
@@ -23,11 +28,17 @@ struct ShortcutsView: View {
             }
             if !migrationDismissed && hasOldDefaults { migrationBanner }
             ForEach(ShortcutGroup.allCases) { group in
-                PageSection(group.title, caption: group.caption) {
-                    Card(padding: EdgeInsets(top: 12, leading: 28, bottom: 12, trailing: 28)) {
-                        ForEach(ShortcutCatalog.actions(in: group)) { action in shortcutRow(action) }
+                let actions = filtered(group)
+                if !actions.isEmpty {
+                    PageSection(group.title, caption: group.caption) {
+                        Card(padding: EdgeInsets(top: 12, leading: 28, bottom: 12, trailing: 28)) {
+                            ForEach(actions) { action in shortcutRow(action) }
+                        }
                     }
                 }
+            }
+            if !query.isEmpty && ShortcutGroup.allCases.allSatisfy({ filtered($0).isEmpty }) {
+                EmptySearchResult(query: query)
             }
             footer
         }
@@ -45,6 +56,13 @@ struct ShortcutsView: View {
                              primaryButton: .destructive(Text("Reset Shortcuts")) { reset() },
                              secondaryButton: .cancel())
             }
+        }
+    }
+
+    private func filtered(_ group: ShortcutGroup) -> [ShortcutAction] {
+        ShortcutCatalog.actions(in: group).filter { action in
+            let keys = (config.bindingStrings[action.id] ?? []).compactMap { KeyCombo(configString: $0)?.displayString }
+            return action.matches(query, keys: keys)
         }
     }
 
