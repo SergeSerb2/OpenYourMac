@@ -13,7 +13,7 @@ struct LiveStripView: View {
                 placeholder("The live map appears while the window manager runs.", symbol: "pause.circle")
             } else if !strip.hasLoaded {
                 placeholder("Reading your strip…", symbol: nil)
-            } else if strip.layouts.allSatisfy({ $0.columns.isEmpty && $0.floating.isEmpty }) {
+            } else if strip.layouts.allSatisfy({ $0.columns.isEmpty && $0.floating.isEmpty && $0.workspaces.count <= 1 }) {
                 placeholder("No windows on the strip yet. Open a window to see it here.", symbol: "macwindow")
             } else {
                 ForEach(strip.layouts) { layout in
@@ -64,12 +64,13 @@ private struct StripLane: View {
                 }
                 Text("\(layout.columns.count) \(layout.columns.count == 1 ? "column" : "columns")")
                     .font(.system(size: 11))
-                if layout.workspaceNumber > 1 {
-                    Text("· Workspace \(layout.workspaceNumber)").font(.system(size: 11))
-                }
                 Spacer()
                 if let offscreen = offscreenSummary {
                     Text(offscreen).font(.system(size: 11))
+                }
+                if layout.workspaces.count > 1 {
+                    WorkspaceSwitcher(layout: layout)
+                        .padding(.leading, 6)
                 }
             }
             .foregroundStyle(Theme.textSecondary)
@@ -92,6 +93,12 @@ private struct StripLane: View {
                         .frame(width: max(layout.viewport.width * scale, 8), height: laneHeight)
                         .offset(x: (layout.viewport.minX - extent.lowerBound) * scale)
                         .accessibilityHidden(true)
+                    if layout.columns.isEmpty {
+                        Text("No windows in workspace \(layout.workspaceNumber)")
+                            .font(Theme.Font.rowSubtitle)
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: width, height: laneHeight)
+                    }
                     ForEach(layout.columns) { column in
                         ColumnTile(column: column) { strip.focus(column, in: layout) }
                             .contextMenu { WindowContextMenu(windows: column.windows) { strip.focus(column, in: layout) } }
@@ -127,6 +134,36 @@ private struct StripLane: View {
     private var offscreenSummary: String? {
         let count = layout.columns.filter { $0.frame.intersection(layout.viewport).width < min($0.frame.width, layout.viewport.width) * 0.6 }.count
         return count > 0 ? "\(count) off screen" : nil
+    }
+}
+
+/// Small numbered chips, one per virtual workspace on this display.
+private struct WorkspaceSwitcher: View {
+    let layout: StripLayout
+    @EnvironmentObject private var strip: StripMonitor
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(layout.workspaces) { workspace in
+                let current = workspace.number == layout.workspaceNumber
+                Button {
+                    strip.showWorkspace(workspace.number, in: layout)
+                } label: {
+                    Text("\(workspace.number)")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(current ? Color.white : Theme.textPrimary)
+                        .frame(minWidth: 20, minHeight: 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(current ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.tileFill))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Workspace \(workspace.number): \(workspace.windowCount) \(workspace.windowCount == 1 ? "window" : "windows")")
+                .accessibilityLabel("Workspace \(workspace.number), \(workspace.windowCount) windows\(current ? ", shown" : "")")
+            }
+        }
     }
 }
 

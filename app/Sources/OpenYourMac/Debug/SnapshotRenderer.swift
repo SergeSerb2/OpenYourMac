@@ -147,7 +147,9 @@ enum SnapshotRenderer {
                 )
             },
             floating: [window(7, "com.apple.calculator", "Calculator", x: 600, y: 300, width: 230, height: 400, floating: true)],
-            workspaceNumber: 1
+            workspaceNumber: 1,
+            workspaces: [.init(number: 1, windowCount: 7), .init(number: 2, windowCount: 3)],
+            isActive: true
         )
         return [layout]
     }

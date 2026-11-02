@@ -77,6 +77,16 @@ struct StripLayout: Equatable, Identifiable {
     var columns: [Column]
     var floating: [EngineSnapshot.Window]
     var workspaceNumber: Int
+    /// Every virtual workspace on this display's Space, for the switcher.
+    var workspaces: [WorkspaceSummary] = []
+    /// True for the display with keyboard focus.
+    var isActive = false
+
+    struct WorkspaceSummary: Equatable, Identifiable {
+        var number: Int
+        var windowCount: Int
+        var id: Int { number }
+    }
 
     var id: UInt32 { displayID }
 
@@ -111,7 +121,17 @@ struct StripLayout: Equatable, Identifiable {
                 viewport: viewport.isEmpty ? (columns.first?.frame ?? .zero) : viewport,
                 columns: columns,
                 floating: placed.filter { $0.floating && $0.bundleID != AppPaths.bundleIdentifier },
-                workspaceNumber: workspace.number
+                workspaceNumber: workspace.number,
+                workspaces: snapshot.virtualWorkspaces
+                    .filter { $0.nativeWorkspaceID == workspace.nativeWorkspaceID }
+                    .map { sibling in
+                        WorkspaceSummary(
+                            number: sibling.number,
+                            windowCount: sibling.windows.filter { $0.bundleID != AppPaths.bundleIdentifier }.count
+                        )
+                    }
+                    .sorted { $0.number < $1.number },
+                isActive: workspace.active
             )
         }
         return result.values.sorted { $0.viewport.minX < $1.viewport.minX }
@@ -250,6 +270,23 @@ final class StripMonitor: ObservableObject {
                 }
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
+            await refresh()
+        }
+    }
+
+    /// Shows another virtual workspace on a display. The engine switches the
+    /// active display, so focus a window on another display first.
+    func showWorkspace(_ number: Int, in layout: StripLayout) {
+        guard let engine, number != layout.workspaceNumber else { return }
+        Task {
+            if !layout.isActive, let window = layout.columns.first?.windows.first {
+                await engine.send(.focusWindow(window.windowID))
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            if case .failure(let error) = await engine.send(EngineCommand(["window", "virtualnum", String(number)])) {
+                NSLog("Could not switch workspace: %@", error.message)
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
             await refresh()
         }
     }
