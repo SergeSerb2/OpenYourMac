@@ -1,11 +1,46 @@
 import SwiftUI
 
+/// Help topics, shown one at a time.
+enum HelpTopic: String, CaseIterable, Identifiable {
+    case guide, shortcuts, settings, integrations, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .guide: return "Guide"
+        case .shortcuts: return "Shortcuts"
+        case .settings: return "Settings File"
+        case .integrations: return "Integrations"
+        case .about: return "About"
+        }
+    }
+
+    /// The topic that holds a section anchor used by links elsewhere in the app.
+    init(anchor: String) {
+        switch anchor {
+        case "shortcuts": self = .shortcuts
+        case "settings": self = .settings
+        case "integrations": self = .integrations
+        case "system", "about": self = .about
+        default: self = .guide
+        }
+    }
+}
+
 struct HelpView: View {
     @Environment(\.isSnapshot) private var isSnapshot
     @EnvironmentObject private var state: AppState
+    @State private var topic: HelpTopic = .guide
 
     var body: some View {
         PageScaffold(title: "Help", subtitle: "How to do things, what to try when something's off, and every shortcut.") {
+            Picker("Topic", selection: $topic) {
+                ForEach(HelpTopic.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 520)
             if isSnapshot {
                 // Match SnapshotRenderer's width so wrapped text contributes its full height.
                 sections
@@ -18,33 +53,50 @@ struct HelpView: View {
                 }
             }
         }
+        .onAppear {
+            if let anchor = state.pendingAnchor { topic = HelpTopic(anchor: anchor) }
+            if isSnapshot, let name = ProcessInfo.processInfo.environment["OYM_SNAPSHOT_HELP"], let chosen = HelpTopic(rawValue: name) {
+                topic = chosen
+            }
+        }
     }
 
-    private var sections: some View {
+    @ViewBuilder private var sections: some View {
         VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
-            strip.id("strip")
-            HelpGuideSection().id("how-to")
-            HelpTroubleshootingSection().id("troubleshooting")
-            HelpShortcutReference().id("shortcuts")
-            HelpSettingsReference().id("settings")
-            HelpIntegrations().id("integrations")
-            HelpSystemInformation().id("system")
-            HelpAbout().id("about")
+            switch topic {
+            case .guide:
+                strip.id("strip")
+                HelpGuideSection().id("how-to")
+                HelpTroubleshootingSection().id("troubleshooting")
+            case .shortcuts:
+                HelpShortcutReference().id("shortcuts")
+            case .settings:
+                HelpSettingsReference().id("settings")
+            case .integrations:
+                HelpIntegrations().id("integrations")
+            case .about:
+                HelpAbout().id("about")
+                HelpSystemInformation().id("system")
+            }
         }
     }
 
     private var strip: some View {
         PageSection("The Strip", caption: "The one idea behind \(AppPaths.appName)") {
             Card(inset: 16) {
-                Text("Your windows sit next to each other on a horizontal strip. The screen is a view into part of that strip. Focus a window and the strip slides to bring it into view. New windows add space instead of making every window smaller. Each display has a strip of its own.")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .center, spacing: 18) {
+                    BrandMark(size: 56)
+                    Text("Your windows sit next to each other on a horizontal strip. The screen is a view into part of that strip. Focus a window and the strip slides to bring it into view. New windows add space instead of making every window smaller. Each display has a strip of its own.")
+                        .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
     private func scrollToPendingAnchor(_ proxy: ScrollViewProxy) {
         guard let anchor = state.pendingAnchor else { return }
+        topic = HelpTopic(anchor: anchor)
         DispatchQueue.main.async {
             proxy.scrollTo(anchor, anchor: .top)
             if state.pendingAnchor == anchor { state.pendingAnchor = nil }
