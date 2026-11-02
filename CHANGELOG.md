@@ -32,6 +32,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Restart the window manager when it stops answering, not only when it exits.
+
 - After an update relaunch, the window manager and window return as they were.
 - After an update that loses Accessibility access, Overview explains how to
   allow the app again.

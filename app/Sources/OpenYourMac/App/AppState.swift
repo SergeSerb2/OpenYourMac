@@ -98,6 +98,9 @@ final class AppState: ObservableObject {
         engine.configure(config: config, preferences: preferences, permissions: permissions)
         displays.configure(config: config)
         strip.configure(engine: engine)
+        engine.onHangRecovered = { [weak self] in
+            self?.toasts.show("The window manager stopped responding, so \(AppPaths.appName) restarted it.", kind: .warning, duration: 5)
+        }
         setup.configure(config: config)
         $isMainWindowVisible
             .removeDuplicates()
