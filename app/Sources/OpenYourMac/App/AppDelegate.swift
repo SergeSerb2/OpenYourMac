@@ -34,10 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar = StatusBarController(state: state)
         installTerminationHandler()
         observePreferences()
+        state.updates.recordLaunch()
+        let relaunch = UpdateRelaunch.consume()
+        state.updates.prepareForRelaunch = { [weak self] in self?.recordStateForUpdateRelaunch() }
 
         let launchedAtLogin = Self.wasLaunchedAsLoginItem()
         let launchedForURL = router.handledLaunchURL
-        let launchedQuietly = launchedAtLogin || launchedForURL
+        // After an update relaunch, keep the window as the user left it.
+        let launchedQuietly = launchedAtLogin || launchedForURL || (relaunch.map { !$0.showWindow } ?? false)
         if state.preferences.showInDock {
             NSApp.setActivationPolicy(.regular)
         } else {
@@ -49,13 +53,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // A lifecycle URL owns its start/stop decision. Do not counteract a stop URL.
         if !router.handledLifecycleLaunchURL {
-            autoStartIfReady()
+            let restore = relaunch?.engineWasRunning == true
+            autoStartIfReady(restoringRunningEngine: restore)
+            if restore {
+                // The update may need the permission again; start once it is back.
+                state.permissions.waitForGrant { [weak self] in self?.autoStartIfReady(restoringRunningEngine: true) }
+            }
         }
         router.finishLaunching()
         if !launchedQuietly {
             introduceMacSetupIfNeeded()
         }
+        if let from = state.updates.updatedFrom {
+            announceUpdate(from: from)
+        }
         state.updates.start()
+    }
+
+    /// Sparkle is about to quit and relaunch the app with the new version.
+    private func recordStateForUpdateRelaunch() {
+        UpdateRelaunch(
+            engineWasRunning: state.engine.state.isRunning || state.engine.state == .starting,
+            showWindow: state.isMainWindowVisible
+        ).save()
+    }
+
+    /// The first launch of a new version. An ad-hoc-signed update can lose the
+    /// Accessibility permission, so say so plainly instead of failing quietly.
+    private func announceUpdate(from previous: String) {
+        state.permissions.refresh()
+        if state.preferences.onboardingCompleted, !state.permissions.isTrusted {
+            state.navigate(to: .overview)
+            return
+        }
+        if state.isMainWindowVisible {
+            state.toasts.show("Updated to \(AppPaths.appName) \(AppPaths.appVersion)", kind: .success, duration: 4)
+        }
     }
 
     /// Handles a normal SIGTERM through the same bounded quit path as ⌘Q.
@@ -72,6 +105,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .dropFirst()
             .sink { [weak self] show in
                 DispatchQueue.main.async { self?.windowController.applyDockVisibility(show) }
+            }
+            .store(in: &subscriptions)
+        // Sparkle's windows belong to this app. Show the Dock icon while they are
+        // open so a menu bar app's update window does not get lost.
+        state.updates.$isPresentingUpdateUI
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] presenting in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.windowController.applyDockVisibility(self.state.preferences.showInDock)
+                    if presenting { NSApp.activate(ignoringOtherApps: true) }
+                }
             }
             .store(in: &subscriptions)
         state.preferences.$onboardingCompleted
@@ -96,9 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func autoStartIfReady() {
+    private func autoStartIfReady(restoringRunningEngine: Bool = false) {
         guard !terminating else { return }
-        state.autoStartIfReady()
+        state.autoStartIfReady(restoringRunningEngine: restoringRunningEngine)
     }
 
     /// True when macOS started the app as a login item.
@@ -117,9 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidHide(_ notification: Notification) {
         windowController.refreshVisibility()
-        if !state.preferences.showInDock {
-            NSApp.setActivationPolicy(.accessory)
-        }
+        windowController.applyDockVisibility(state.preferences.showInDock)
     }
 
     func applicationDidUnhide(_ notification: Notification) {
@@ -171,6 +215,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// What to restore after Sparkle relaunches the app with a new version.
+/// Stored for one launch only.
+struct UpdateRelaunch {
+    var engineWasRunning: Bool
+    var showWindow: Bool
+
+    func save() {
+        let defaults = UserDefaults.standard
+        defaults.set(engineWasRunning, forKey: UpdateChecker.Key.relaunchRestoreEngine)
+        defaults.set(showWindow, forKey: UpdateChecker.Key.relaunchShowWindow)
+    }
+
+    /// Reads and clears the saved state.
+    static func consume() -> UpdateRelaunch? {
+        guard !AppPaths.isSnapshot else { return nil }
+        let defaults = UserDefaults.standard
+        guard let engine = defaults.object(forKey: UpdateChecker.Key.relaunchRestoreEngine) as? Bool else { return nil }
+        let show = defaults.bool(forKey: UpdateChecker.Key.relaunchShowWindow)
+        defaults.removeObject(forKey: UpdateChecker.Key.relaunchRestoreEngine)
+        defaults.removeObject(forKey: UpdateChecker.Key.relaunchShowWindow)
+        return UpdateRelaunch(engineWasRunning: engine, showWindow: show)
+    }
+}
+
 /// The main window: a fixed-chrome NSWindow hosting the SwiftUI root view.
 @MainActor
 final class MainWindowController: NSObject, NSWindowDelegate {
@@ -197,7 +265,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     /// Shows the Dock icon when the preference asks for it or the window is open.
     func applyDockVisibility(_ show: Bool) {
-        NSApp.setActivationPolicy(show || (window?.isVisible == true && !NSApp.isHidden) ? .regular : .accessory)
+        let windowOpen = window?.isVisible == true && !NSApp.isHidden
+        NSApp.setActivationPolicy(show || windowOpen || state.updates.isPresentingUpdateUI ? .regular : .accessory)
     }
 
     /// Closing only hides the window, so its state survives.

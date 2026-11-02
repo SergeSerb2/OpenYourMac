@@ -37,6 +37,8 @@ struct OverviewView: View {
                 EngineFailureCard(failure: failure)
             }
 
+            OverviewUpdateBanner()
+
             if !preferences.gettingStartedDismissed {
                 PageSection("Getting Started", caption: "The five shortcuts you need. Everything else is in Help.") {
                     GettingStartedCard()
@@ -207,9 +209,18 @@ private struct FinishSettingUpCard: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var permissions: PermissionManager
     @EnvironmentObject private var preferences: Preferences
+    @EnvironmentObject private var updates: UpdateChecker
     @State private var confirmRepair = false
 
     var body: some View {
+        if let previous = updates.updatedFrom, preferences.onboardingCompleted {
+            AfterUpdatePermissionCard(previous: previous)
+        } else {
+            firstSetup
+        }
+    }
+
+    private var firstSetup: some View {
         PageSection("Finish Setting Up", caption: "\(AppPaths.appName) can't move windows until this is done") {
             Card(padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14), fill: Theme.warning.opacity(0.06), stroke: Theme.warning.opacity(0.22)) {
                 HStack(alignment: .top, spacing: 12) {
@@ -250,6 +261,43 @@ private struct FinishSettingUpCard: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("macOS sometimes keeps an old permission after an update. This clears it and asks again; turn \(AppPaths.appName) back on in the list.")
+        }
+    }
+}
+
+/// After an update, macOS can treat the new build as a different app. The old
+/// Accessibility entry then stays switched on but no longer applies.
+private struct AfterUpdatePermissionCard: View {
+    let previous: String
+    @EnvironmentObject private var permissions: PermissionManager
+    @EnvironmentObject private var preferences: Preferences
+
+    var body: some View {
+        PageSection("Allow \(AppPaths.appName) Again", caption: "Updated from \(previous) to \(AppPaths.appVersion)") {
+            Card(padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14), fill: Theme.warning.opacity(0.06), stroke: Theme.warning.opacity(0.22)) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "lock.rotation")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(Theme.warning)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("macOS needs your permission again after the update")
+                            .font(Theme.Font.rowTitleEmphasis)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("This build is not signed by an Apple developer ID, so macOS sees the new version as a new app. The old switch in Accessibility no longer applies. Reset it, then turn \(AppPaths.appName) on again.\(preferences.startEngineAutomatically ? " The window manager starts by itself when you are done." : "")")
+                            .font(Theme.Font.rowSubtitle)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Button("Reset and Allow Again") { permissions.repair() }
+                                .buttonStyle(PrimaryButtonStyle())
+                            Button("Open Accessibility Settings") { permissions.openAccessibilitySettings() }
+                                .buttonStyle(SecondaryButtonStyle())
+                        }
+                        .padding(.top, 6)
+                    }
+                }
+            }
         }
     }
 }

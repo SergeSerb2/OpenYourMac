@@ -40,6 +40,12 @@ final class PermissionManager: ObservableObject {
         }
     }
 
+    /// Offscreen snapshots can show the missing-permission states.
+    func setPreview(trusted: Bool) {
+        guard AppPaths.isSnapshot else { return }
+        isTrusted = trusted
+    }
+
     /// Shows the macOS permission prompt.
     func request() {
         guard !AppPaths.isSnapshot else { return }

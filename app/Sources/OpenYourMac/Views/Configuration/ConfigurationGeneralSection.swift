@@ -3,10 +3,9 @@ import SwiftUI
 struct ConfigurationGeneralSection: View {
     @EnvironmentObject private var preferences: Preferences
     @EnvironmentObject private var loginItem: LoginItemManager
-    @EnvironmentObject private var updates: UpdateChecker
 
     var body: some View {
-        PageSection("General", caption: "Startup and updates — these apply immediately") {
+        PageSection("General", caption: "Startup and appearance. These apply immediately.") {
             Card {
                 LoginItemSettingRow()
                 if let error = loginItem.lastError {
@@ -31,33 +30,8 @@ struct ConfigurationGeneralSection: View {
                     subtitle: "When off, \(AppPaths.appName) stays in the menu bar; it appears in the Dock while this window is open",
                     isOn: $preferences.showInDock
                 )
-                CardDivider()
-                SettingToggleRow(
-                    title: "Automatically Check for Updates",
-                    subtitle: lastChecked,
-                    isOn: $updates.automaticallyChecksForUpdates
-                )
-                CardDivider()
-                SettingToggleRow(
-                    title: "Automatically Download and Install Updates",
-                    subtitle: "Download signed updates in the background and install them when the app quits",
-                    isOn: $updates.automaticallyDownloadsUpdates
-                )
-                .disabled(!updates.automaticallyChecksForUpdates)
-                Button("Check for Updates…") { updates.checkForUpdates() }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(!updates.canCheckForUpdates)
-                    .opacity(updates.canCheckForUpdates ? 1 : 0.45)
-                    .padding(.bottom, 10)
             }
         }
-    }
-
-    private var lastChecked: String {
-        guard let date = updates.lastUpdateCheck else { return "Never checked" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return "Last checked \(formatter.localizedString(for: date, relativeTo: Date()))"
     }
 }
 

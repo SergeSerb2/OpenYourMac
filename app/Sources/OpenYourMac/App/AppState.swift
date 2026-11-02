@@ -91,9 +91,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    func autoStartIfReady() {
+    /// Starts the engine when everything it needs is ready. After an update
+    /// relaunch, a running engine is restored even if automatic start is off.
+    func autoStartIfReady(restoringRunningEngine: Bool = false) {
         setup.refresh()
-        guard !AppPaths.isSnapshot, preferences.startEngineAutomatically,
+        guard !AppPaths.isSnapshot, preferences.startEngineAutomatically || restoringRunningEngine,
               preferences.onboardingCompleted, permissions.isTrusted,
               setup.separateSpacesReady, engine.state == .stopped else { return }
         engine.start()

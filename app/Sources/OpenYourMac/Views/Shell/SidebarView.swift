@@ -50,6 +50,10 @@ struct SidebarView: View {
 
             Spacer(minLength: 12)
 
+            SidebarUpdateCard()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
             OpenSourceCard()
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
@@ -168,6 +172,54 @@ private struct OpenSourceCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("About OpenYourMac")
+    }
+}
+
+/// Appears when a new version is waiting. Opens the Updates settings.
+private struct SidebarUpdateCard: View {
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var updates: UpdateChecker
+    @State private var hovering = false
+
+    var body: some View {
+        if let update = updates.phase.update {
+            Button {
+                state.navigate(to: .configuration, anchor: "updates")
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: isReady ? "arrow.clockwise.circle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(isReady ? "Restart to Update" : "Update Available")
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Text("Version \(update.version)")
+                            .font(.system(size: 10.5))
+                            .opacity(0.85)
+                    }
+                    .foregroundStyle(.white)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.accent.opacity(hovering ? 0.9 : 1))
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Show update details")
+            .accessibilityLabel(isReady ? "Restart to update to version \(update.version)" : "Update available: version \(update.version)")
+        }
+    }
+
+    private var isReady: Bool {
+        if case .readyToInstall = updates.phase { return true }
+        return false
     }
 }
 

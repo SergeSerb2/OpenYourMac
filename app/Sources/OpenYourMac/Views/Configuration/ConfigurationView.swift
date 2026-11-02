@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ConfigurationView: View {
+    @EnvironmentObject private var state: AppState
     @EnvironmentObject private var config: ConfigStore
     @EnvironmentObject private var setup: MacSetupChecker
     @EnvironmentObject private var displays: DisplayStore
@@ -24,15 +25,22 @@ struct ConfigurationView: View {
                     }
                 }
             }
-            ConfigurationGeneralSection()
-            ConfigurationDisplaysSection()
-            ConfigurationLayoutSection()
-            PresetWidthsEditor()
-            ConfigurationAppearanceSection()
-            ConfigurationGesturesSection()
-            ConfigurationBehaviorSection()
-            ConfigurationRulesSection()
-            ConfigurationFooter()
+            ScrollViewReader { proxy in
+                VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
+                    ConfigurationGeneralSection()
+                    ConfigurationUpdatesSection()
+                    ConfigurationDisplaysSection()
+                    ConfigurationLayoutSection()
+                    PresetWidthsEditor()
+                    ConfigurationAppearanceSection()
+                    ConfigurationGesturesSection()
+                    ConfigurationBehaviorSection()
+                    ConfigurationRulesSection()
+                    ConfigurationFooter()
+                }
+                .onAppear { scrollToPendingAnchor(proxy) }
+                .onChange(of: state.pendingAnchor) { _ in scrollToPendingAnchor(proxy) }
+            }
         }
         .alert(item: $config.pendingOverrideEdit) { request in
             Alert(title: Text("Update the overriding setting?"),
@@ -51,6 +59,14 @@ struct ConfigurationView: View {
             config.flushPendingOptions()
         }
         .onChange(of: config.options.swipeGestureFingers) { _ in setup.refresh() }
+    }
+
+    private func scrollToPendingAnchor(_ proxy: ScrollViewProxy) {
+        guard let anchor = state.pendingAnchor, state.page == .configuration else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(anchor, anchor: .top) }
+            if state.pendingAnchor == anchor { state.pendingAnchor = nil }
+        }
     }
 }
 

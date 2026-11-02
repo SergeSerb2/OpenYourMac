@@ -43,6 +43,7 @@ enum SnapshotRenderer {
         }
         let pageFilter = ProcessInfo.processInfo.environment["OYM_SNAPSHOT_PAGES"]?.split(separator: ",").map(String.init)
         let increasedContrast = ProcessInfo.processInfo.environment["OYM_SNAPSHOT_CONTRAST"] == "increased"
+        applyUpdatePreview(ProcessInfo.processInfo.environment["OYM_SNAPSHOT_UPDATE"], to: state)
 
         for appearanceName in [NSAppearance.Name.darkAqua, .aqua] {
             let suffix = appearanceName == .darkAqua ? "dark" : "light"
@@ -90,6 +91,30 @@ enum SnapshotRenderer {
             }
         }
         print("Snapshots written to \(outputDirectory.path)")
+    }
+
+    /// `OYM_SNAPSHOT_UPDATE` shows one update state: checking, current, available,
+    /// installing, ready, failed, updated, or updated-permission.
+    private static func applyUpdatePreview(_ name: String?, to state: AppState) {
+        guard let name else { return }
+        let sample = AvailableUpdate(version: "1.1.0", build: "60", size: 19_400_000)
+        let checked = Date().addingTimeInterval(-3 * 3600)
+        switch name {
+        case "checking": state.updates.setPreview(.checking, lastCheck: checked)
+        case "current": state.updates.setPreview(.upToDate, lastCheck: checked)
+        case "available": state.updates.setPreview(.available(sample), lastCheck: checked)
+        case "installing": state.updates.setPreview(.installing(sample), lastCheck: checked)
+        case "ready": state.updates.setPreview(.readyToInstall(sample), lastCheck: checked)
+        case "failed":
+            state.updates.setPreview(.failed("Could not reach the update server. Check your internet connection and try again."), lastCheck: checked)
+        case "updated": state.updates.setPreview(.upToDate, lastCheck: Date(), updatedFrom: "1.0.0")
+        case "updated-permission":
+            state.updates.setPreview(.upToDate, lastCheck: Date(), updatedFrom: "1.0.0")
+            state.preferences.onboardingCompleted = true
+            state.permissions.setPreview(trusted: false)
+            state.engine.setPreviewState(.stopped)
+        default: break
+        }
     }
 
     private static func render<V: View>(
