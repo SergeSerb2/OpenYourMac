@@ -28,6 +28,8 @@ struct EngineCommand: Hashable, CustomStringConvertible {
     static func swap(_ d: Direction) -> EngineCommand { EngineCommand(["window", "swap", d.rawValue]) }
     static func focus(index: Int) -> EngineCommand { EngineCommand(["window", "focus", String(index)]) }
     static func swap(index: Int) -> EngineCommand { EngineCommand(["window", "swap", String(index)]) }
+    /// Focuses one window by its window ID (the live map and Windows menu).
+    static func focusWindow(_ id: Int) -> EngineCommand { EngineCommand(["window", "focuswindow", String(id)]) }
 
     static let center = EngineCommand(["window", "center"])
     static let resize = EngineCommand(["window", "resize"])

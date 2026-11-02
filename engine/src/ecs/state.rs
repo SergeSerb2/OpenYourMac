@@ -884,6 +884,10 @@ impl QueryState for PaneruQueryState {
                                 .active_display_space(display.id())
                                 .is_ok_and(|space| space == strip.id())
                         }),
+                display_id: displays
+                    .get(child.parent())
+                    .ok()
+                    .map(|(display, _, _)| display.id()),
                 windows: row_windows,
             });
 
@@ -907,6 +911,7 @@ impl QueryState for PaneruQueryState {
                         native_workspace_id: workspace_id,
                         active: false,
                         visible: false,
+                        display_id: None,
                         windows: Vec::new(),
                     });
                 }

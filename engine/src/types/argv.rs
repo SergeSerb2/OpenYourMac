@@ -76,6 +76,13 @@ fn parse_operation(argv: &[&str]) -> Result<Operation> {
             "managed" => Operation::FocusManaged,
             direction => Operation::Focus(Direction::parse_positional(direction)?),
         },
+        "focuswindow" => Operation::FocusWindow(
+            argument()?
+                .parse::<i32>()
+                .ok()
+                .filter(|id| *id > 0)
+                .ok_or_else(err)?,
+        ),
         "raise" => match argument()? {
             "floating" => Operation::RaiseFloating,
             _ => return Err(err()),
@@ -154,6 +161,7 @@ fn valid_operation_arity(argv: &[&str]) -> bool {
         argv,
         [
             "focus"
+                | "focuswindow"
                 | "raise"
                 | "swap"
                 | "consume"
@@ -317,6 +325,7 @@ impl Operation {
             }
             Operation::FocusUnmanaged => owned(&["focus", "unmanaged"]),
             Operation::FocusManaged => owned(&["focus", "managed"]),
+            Operation::FocusWindow(id) => vec!["focuswindow".to_string(), id.to_string()],
             Operation::RaiseFloating => owned(&["raise", "floating"]),
             Operation::ToggleFloatingLayer => owned(&["togglefloatlayer"]),
             Operation::CopyRule => owned(&["copyrule"]),

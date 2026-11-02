@@ -503,6 +503,7 @@ mod tests {
                 native_workspace_id: 10,
                 active: true,
                 visible: true,
+                display_id: Some(1),
                 windows,
             }],
         }

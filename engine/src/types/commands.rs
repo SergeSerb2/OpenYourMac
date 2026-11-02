@@ -310,6 +310,10 @@ pub enum Operation {
     VirtualMoveNumber(u32, MoveFocus),
     /// Focuses the workspace's last-focused floating window.
     FocusUnmanaged,
+    /// Focuses one window by its window ID, on any display or strip. Clients
+    /// that show the layout use this; positional focus targets only the
+    /// active display.
+    FocusWindow(i32),
     /// Focuses the workspace's last-focused managed (tiled) window.
     FocusManaged,
     /// Raises all visible floating windows on the active display and focuses

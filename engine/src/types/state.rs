@@ -103,6 +103,10 @@ pub struct VirtualWorkspaceState {
     /// only one is `active`.
     #[serde(default)]
     pub visible: bool,
+    /// The display that owns this strip. Off-screen windows can be parked on a
+    /// neighbouring display, so their `display_id` does not say this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_id: Option<u32>,
     pub windows: Vec<WindowState>,
 }
 
@@ -346,6 +350,7 @@ mod tests {
                 native_workspace_id: 1,
                 active: true,
                 visible: true,
+                display_id: Some(1),
                 windows: vec![
                     window(1, 500, true),
                     window(2, 0, false),

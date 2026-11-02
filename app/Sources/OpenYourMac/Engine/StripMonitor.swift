@@ -39,10 +39,13 @@ struct EngineSnapshot: Decodable, Equatable {
         var active: Bool
         /// Shown on its display now. Engines before this field omit it.
         var visible: Bool?
+        /// The display that owns the strip. Engines before this field omit it.
+        var displayID: UInt32?
         var windows: [Window]
 
         enum CodingKeys: String, CodingKey {
-            case number, nativeWorkspaceID = "native_workspace_id", active, visible, windows
+            case number, nativeWorkspaceID = "native_workspace_id", active, visible
+            case displayID = "display_id", windows
         }
     }
 
@@ -91,10 +94,11 @@ struct StripLayout: Equatable, Identifiable {
         var result: [UInt32: StripLayout] = [:]
         for workspace in snapshot.virtualWorkspaces where workspace.active || workspace.visible == true {
             let placed = workspace.windows.filter { $0.displayID != nil && $0.frame != nil }
-            // A workspace belongs to one display. Parked windows can poke onto a
-            // neighbour, so use the display most of its windows are on.
+            // A workspace belongs to one display. Parked windows can sit on a
+            // neighbour, so trust the engine's owner; older engines fall back
+            // to the display most of its windows are on.
             let counts = Dictionary(grouping: placed) { $0.displayID! }.mapValues(\.count)
-            guard let displayID = counts.max(by: { $0.value < $1.value })?.key else { continue }
+            guard let displayID = workspace.displayID ?? counts.max(by: { $0.value < $1.value })?.key else { continue }
             if result[displayID] != nil, !workspace.active { continue }
             let viewport = CGDisplayBounds(displayID)
             let tiled = placed.filter { !$0.floating }
@@ -226,19 +230,23 @@ final class StripMonitor: ObservableObject {
         Task { await refresh() }
     }
 
-    /// Focuses a column from the map or the menu. Bindings address columns 1–8,
-    /// so later columns are reached from column 8, one step east at a time.
+    /// Focuses a column from the map or the menu by its top window's ID, so
+    /// the right window gets focus on any display, even while this app's own
+    /// floating window is focused. Engines without `focuswindow` use the
+    /// column number on the active display instead.
     func focus(_ column: StripLayout.Column, in layout: StripLayout) {
-        guard let engine else { return }
+        guard let engine, let window = column.windows.first else { return }
         let isLast = column.number == layout.columns.map(\.number).max()
         Task {
-            if isLast {
-                await engine.send(.focus(.last))
-            } else if column.number <= 8 {
-                await engine.send(.focus(index: column.number))
-            } else if case .success = await engine.send(.focus(index: 8)) {
-                for _ in 0..<(column.number - 8) {
-                    guard case .success = await engine.send(.focus(.east)) else { break }
+            if case .failure = await engine.send(.focusWindow(window.windowID)) {
+                if isLast {
+                    await engine.send(.focus(.last))
+                } else if column.number <= 8 {
+                    await engine.send(.focus(index: column.number))
+                } else if case .success = await engine.send(.focus(index: 8)) {
+                    for _ in 0..<(column.number - 8) {
+                        guard case .success = await engine.send(.focus(.east)) else { break }
+                    }
                 }
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
