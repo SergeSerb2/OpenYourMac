@@ -71,6 +71,8 @@ final class EngineController: ObservableObject {
     private var logTimer: Timer?
     private var restartTask: Task<Void, Never>?
     private var startedAt = Date.distantPast
+    /// Hang detection. Armed after the engine first answers a query.
+    private var watchdogTask: Task<Void, Never>?
     private var crashes: [Date] = []
     /// Set while a `quit` command is in flight, so the exit is not treated as a crash.
     private var expectedQuit = false
@@ -97,6 +99,8 @@ final class EngineController: ObservableObject {
     private static let startupFailureWindow: TimeInterval = 10
     private static let recentLogLines = 40
     private static let launchMarker = "=== Window manager started "
+    private static let watchdogInterval: UInt64 = 10_000_000_000
+    private static let watchdogMisses = 3
 
     init() {}
 
@@ -380,18 +384,81 @@ final class EngineController: ObservableObject {
     }
 
     private func transition(_ next: EngineState) {
+        let changed = state != next
         state = next
+        if next == .running { startWatchdog() } else if next != .starting { stopWatchdog() }
         switch next {
         case .running, .failed: finishRestart(with: next)
         case .stopped where !restartAfterStop: finishRestart(with: next)
         default: break
         }
+        guard changed else { return }
         var line = "[OpenYourMac] State: \(next.label)"
         if case .failed(let reason) = next {
             line += " (\(reason))"
         }
         appendLog(line)
     }
+
+    // MARK: Hang detection
+
+    /// A running engine answers `query active` quickly. If it stops answering
+    /// while its process is still alive, it is stuck: restart it. The check
+    /// arms only after a first answer, so an IPC-only test listener (which
+    /// never answers queries) is never restarted.
+    private func startWatchdog() {
+        stopWatchdog()
+        guard !AppPaths.isSnapshot, ProcessInfo.processInfo.environment["OYM_ENGINE_WATCHDOG"] != "0" else { return }
+        let child = process
+        watchdogTask = Task { [weak self] in
+            var armed = false
+            var misses = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.watchdogInterval)
+                guard !Task.isCancelled, let self, self.process === child, child?.isRunning == true,
+                      self.state == .running else { return }
+                let answered = await self.engineAnswers()
+                // The user may have stopped or restarted the engine meanwhile.
+                guard !Task.isCancelled, let child, self.process === child, child.isRunning,
+                      self.state == .running else { return }
+                if answered {
+                    armed = true
+                    misses = 0
+                    continue
+                }
+                guard armed else { continue }
+                misses += 1
+                self.appendLog("[OpenYourMac] The window manager did not answer (\(misses)/\(Self.watchdogMisses))")
+                if misses >= Self.watchdogMisses {
+                    self.recoverFromHang(child)
+                    return
+                }
+            }
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
+    }
+
+    private func engineAnswers() async -> Bool {
+        var environment = ProcessInfo.processInfo.environment
+        environment["NO_COLOR"] = "1"
+        let result = await ProcessRunner.run(AppPaths.engineBinary, arguments: ["query", "active", "--json"], timeout: 3, environment: environment)
+        return result.status == 0 && result.output.contains("{")
+    }
+
+    /// Kills the stuck engine and starts a new one. Counts toward the crash budget.
+    private func recoverFromHang(_ child: Process) {
+        guard process === child, child.isRunning else { return }
+        appendLog("[OpenYourMac] The window manager stopped answering; restarting it")
+        onHangRecovered?()
+        Darwin.kill(child.processIdentifier, SIGKILL)
+    }
+
+    /// Called when the watchdog restarts a stuck engine, so the UI can say so.
+    var onHangRecovered: (() -> Void)?
 
     // MARK: Log
 

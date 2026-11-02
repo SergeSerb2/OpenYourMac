@@ -30,8 +30,9 @@ endorsed by ChainYourMac or its developer. OpenYourMac uses its own config path,
 
 ## Features
 
-- A live map of each display's strip in the app. Click a column to focus it.
-  The menu bar's **Windows** menu lists the same columns.
+- A live map of each display's strip in the app. Click a column to focus it,
+  switch virtual workspaces, or right-click an app to make it always float or
+  always tile. The menu bar's **Windows** menu lists the same columns.
 - Strip layout with preset widths, full width, and column centering options.
 - Stacks and tabs: show several windows in one column, split or one at a time.
 - Pinned columns at the left and right edges.

@@ -15,7 +15,11 @@ The app starts the bundled engine with `launch`, sets `OPENYOURMAC_CONFIG` to it
 config file, and captures stdout and stderr in the engine log. It stops the child
 when the app quits. The engine also watches its parent and exits if that parent
 is gone. The app can restart an unexpectedly exited child, with a bounded retry
-budget. It reports permission, config, duplicate-instance, and launch failures.
+budget. While the engine runs, the app asks it `query active` every 10 seconds.
+After the first answer, three missed answers in a row mean the engine is stuck.
+The app then kills it and restarts it through the same retry budget. An
+IPC-only listener never answers queries, so this check never arms for it.
+`OYM_ENGINE_WATCHDOG=0` turns the check off. It reports permission, config, duplicate-instance, and launch failures.
 
 The app sends commands by running `OpenYourMacEngine send-cmd ...`. It does not
 hold a direct IPC connection. The CLI wrapper uses the same helper for window

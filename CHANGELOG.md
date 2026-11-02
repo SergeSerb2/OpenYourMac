@@ -11,6 +11,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - A live map of each display's strip on Overview. Click a column to focus it.
+- Workspace chips on the live map that switch virtual workspaces.
+- Right-click a window on the live map to make its app always float or tile.
+- The last onboarding step shows the user's own strip.
 - A Windows submenu in the menu bar that lists and focuses strip columns.
 - An Updates section with version, status, and Check Now or Restart to Update.
 - Update badges in the menu bar and sidebar instead of alerts during work.
@@ -28,6 +31,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Configuration has section chips; numbered actions use a compact pad.
 
 ### Fixed
+
+- Restart the window manager when it stops answering, not only when it exits.
 
 - After an update relaunch, the window manager and window return as they were.
 - After an update that loses Accessibility access, Overview explains how to
