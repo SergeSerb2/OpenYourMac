@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSApp.setActivationPolicy(.accessory)
         }
-        if !launchedQuietly, state.preferences.showWindowOnLaunch || state.showOnboarding {
+        if !launchedQuietly, state.preferences.showWindowOnLaunch || state.showOnboarding || relaunch?.showWindow == true {
             windowController.show()
         }
 
