@@ -100,6 +100,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        guard menu === item.menu else { return }
+        // The Windows submenu reads this when it opens.
+        state.strip.refreshSoon()
         state.setup.refresh()
         state.loginItem.refresh()
         rebuild()
@@ -132,6 +135,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         add("Start", to: menu, action: #selector(start), key: "s", enabled: !engineState.isBusy)
         add("Stop", to: menu, action: #selector(stop), key: "t")
         add("Restart", to: menu, action: #selector(restart), key: "r", enabled: !engineState.isBusy)
+        let windows = add("Windows", to: menu, enabled: engineState.isRunning)
+        let windowsMenu = NSMenu(title: "Windows")
+        windowsMenu.delegate = self
+        windows.submenu = windowsMenu
         add("Actions", to: menu).submenu = makeActionsMenu()
         menu.addItem(.separator())
 
@@ -150,6 +157,52 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         add(updateMenuTitle, to: menu, action: #selector(checkUpdates), enabled: updates.primaryActionEnabled)
         add("Quit \(AppPaths.appName)", to: menu, action: #selector(quit), key: "q")
+    }
+
+    /// Fills the Windows submenu with the strip's columns as it opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "Windows" else { return }
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        let layouts = state.strip.layouts
+        if layouts.allSatisfy({ $0.columns.isEmpty }) {
+            add("No windows on the strip", to: menu, enabled: false)
+        }
+        for layout in layouts where !layout.columns.isEmpty {
+            if layouts.count > 1 {
+                add(layout.displayName, to: menu, enabled: false)
+            }
+            for column in layout.columns {
+                let names = column.windows.map(\.appName).joined(separator: " + ")
+                let title = column.windows.count == 1 && !column.windows[0].title.isEmpty
+                    ? "\(names) — \(column.windows[0].title)" : names
+                let row = add(String(title.prefix(70)), to: menu, action: #selector(focusColumn(_:)))
+                row.representedObject = ColumnTarget(layout: layout, column: column)
+                row.state = column.isFocused ? .on : .off
+                if let bundleID = column.windows.first?.bundleID {
+                    let icon = AppIconCache.icon(for: bundleID).copy() as? NSImage
+                    icon?.size = NSSize(width: 16, height: 16)
+                    row.image = icon
+                }
+                row.toolTip = "Column \(column.number)"
+            }
+        }
+        menu.addItem(.separator())
+        add("Show Strip Map…", to: menu, action: #selector(showDetails))
+    }
+
+    private final class ColumnTarget: NSObject {
+        let layout: StripLayout
+        let column: StripLayout.Column
+        init(layout: StripLayout, column: StripLayout.Column) {
+            self.layout = layout
+            self.column = column
+        }
+    }
+
+    @objc private func focusColumn(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? ColumnTarget else { return }
+        state.strip.focus(target.column, in: target.layout)
     }
 
     private func makeActionsMenu() -> NSMenu {

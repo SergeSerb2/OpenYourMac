@@ -210,9 +210,9 @@ final class StripMonitor: ObservableObject {
         updatePolling()
     }
 
-    /// Asks again at once, for example after the user focuses a column.
+    /// Asks once now, even when no map is visible (the menu bar menu uses this).
     func refreshSoon() {
-        guard task != nil else { return }
+        guard !AppPaths.isSnapshot, engine?.state.isRunning == true else { return }
         Task { await refresh() }
     }
 
