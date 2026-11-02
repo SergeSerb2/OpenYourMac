@@ -91,6 +91,8 @@ final class AppState: ObservableObject {
     /// While set, the window manager is stopped and starts again at this time.
     @Published private(set) var pausedUntil: Date?
     private var resumeTask: Task<Void, Never>?
+    /// A resume waiting for the pause's stop to finish.
+    private var pendingResume: Task<Void, Never>?
 
     /// Called by the window controller to show the main window.
     var openMainWindow: () -> Void = {}
@@ -154,6 +156,8 @@ final class AppState: ObservableObject {
         guard !AppPaths.isSnapshot, (1...1440).contains(minutes),
               engine.state.isRunning || engine.state == .starting else { return }
         let until = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        pendingResume?.cancel()
+        pendingResume = nil
         engine.stop()
         pausedUntil = until
         resumeTask?.cancel()
@@ -170,12 +174,14 @@ final class AppState: ObservableObject {
     func resumeFromPause() {
         guard pausedUntil != nil else { return }
         endPause()
-        Task { [weak self] in
+        pendingResume?.cancel()
+        pendingResume = Task { [weak self] in
             for _ in 0..<50 {
                 guard let self, self.engine.state == .stopping else { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
-            guard let self else { return }
+            // A stop or a new pause since then cancels this resume.
+            guard !Task.isCancelled, let self else { return }
             self.permissions.refresh()
             guard self.permissions.isTrusted, self.preferences.onboardingCompleted,
                   self.engine.state == .stopped else { return }
@@ -187,6 +193,8 @@ final class AppState: ObservableObject {
     /// does not start again at the pause's end.
     func stopEngineByUser() {
         endPause()
+        pendingResume?.cancel()
+        pendingResume = nil
         engine.stop()
     }
 
