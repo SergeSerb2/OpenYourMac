@@ -73,9 +73,14 @@ enum UpdateLocationProblem: Equatable {
     }
 
     static var current: UpdateLocationProblem? {
-        let path = Bundle.main.bundleURL.resolvingSymlinksInPath().path
-        if path.contains("/AppTranslocation/") { return .translocated }
-        if path.hasPrefix("/Volumes/") { return .diskImage }
+        let url = Bundle.main.bundleURL.resolvingSymlinksInPath()
+        if url.path.contains("/AppTranslocation/") { return .translocated }
+        // A mounted disk image is read-only. A writable external drive is a
+        // valid place to install, so the /Volumes prefix alone is not enough.
+        if url.path.hasPrefix("/Volumes/"),
+           (try? url.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly == true {
+            return .diskImage
+        }
         return nil
     }
 }
