@@ -60,7 +60,7 @@ actions that start the engine.
 
 Other launchers and shell scripts can use these same URLs. This table lists the
 main routes; the app also accepts consume west and expel east. Numbered focus
-and swap positions and `strip show` are CLI actions, not URL routes.
+and swap positions are CLI actions, not URL routes.
 Direction values are `west`, `east`, `north`, `south`, `first`, and `last`.
 
 | URL | Action |
@@ -87,6 +87,8 @@ Direction values are `west`, `east`, `north`, `south`, `first`, and `last`.
 | `openyourmac://window/manage` | Switch the active window between tiled and floating. |
 | `openyourmac://window/nextdisplay` | Move the active window to the next display. |
 | `openyourmac://window/pin/<left\|right>` | Pin the active column to that edge, or unpin it. |
+| `openyourmac://strip/show` | Show the strip minimap. |
+| `openyourmac://open/<page>` | Open the app window at a page: `overview`, `actions`, `shortcuts`, `settings`, `setup`, or `help`. |
 
 Use `open -g` so the URL runs in the background:
 
@@ -94,6 +96,7 @@ Use `open -g` so the URL runs in the background:
 open -g "openyourmac://window/focus/east"
 ```
 
+Use plain `open` (without `-g`) for `open/<page>`, which brings the window forward.
 The app validates URLs against a fixed list of routes. Unknown routes are
 ignored. `start` and `restart` never prompt for permission and require completed
 onboarding and Accessibility access. `toggle` has the same requirements when

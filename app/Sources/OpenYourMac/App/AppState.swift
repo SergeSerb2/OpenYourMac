@@ -29,6 +29,19 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Names accepted by `openyourmac://open/<page>`.
+    init?(urlName: String) {
+        switch urlName.lowercased() {
+        case "overview", "home": self = .overview
+        case "actions": self = .actions
+        case "shortcuts", "keys": self = .shortcuts
+        case "configuration", "settings", "preferences": self = .configuration
+        case "macsetup", "mac-setup", "setup": self = .macSetup
+        case "help": self = .help
+        default: return nil
+        }
+    }
+
     /// ⌘1…⌘6 in the Go menu.
     var shortcutNumber: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
 
