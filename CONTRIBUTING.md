@@ -31,8 +31,8 @@ mocks. Run the complete local checks before opening a pull request:
 make ci
 ```
 
-Checks run only on your Mac. There are no GitHub Actions builds. `scripts/ci.sh`
-also works from another directory. It checks Rust formatting, strict Clippy,
+GitHub Actions runs the same checks on macOS. `scripts/ci.sh` also works from
+another directory. It checks Rust formatting, strict Clippy,
 existing tests, optional Lua compilation, notices, warning-free Swift debug and
 release builds, and the release bundle before and after ZIP extraction. It stops
 at the first failure. It does not start the app or window manager.

@@ -3,7 +3,7 @@
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and
 [engine/AGENTS.md](engine/AGENTS.md) before running binaries.
 
-Run `make ci` locally before opening a PR. GitHub Actions builds are disabled.
+Run `make ci` locally before opening a PR. GitHub Actions runs the same checks.
 Use `scripts/release.sh` for local artifacts. Use `--publish` only when asked to
 create a release tag and draft GitHub Release. See [releasing](docs/releasing.md).
 
