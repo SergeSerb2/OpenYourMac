@@ -30,9 +30,8 @@ windows. Another window manager may already own those windows and shortcuts.
 
 ## Build and existing checks
 
-Run `make ci` from the repository root before opening a PR. These checks run only
-locally; there are no GitHub Actions builds. The script adds `~/.cargo/bin` to
-PATH. For a focused engine change, these commands are also available:
+Run `make ci` from the repository root before opening a PR. GitHub Actions runs
+the same checks. The script adds `~/.cargo/bin` to PATH. For a focused engine change, these commands are also available:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"

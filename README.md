@@ -89,8 +89,8 @@ The result is `build/OpenYourMac.app`. Use `make debug` (or
 `scripts/build-app.sh --debug`) for a debug build. `make` adds `~/.cargo/bin`
 to `PATH` itself. To run the script directly, put Cargo on your `PATH` first. Move the app to `/Applications` before granting Accessibility.
 The script builds the engine without Lua and uses an ad-hoc signature by default.
-Run `make ci` locally before opening a pull request. Builds and releases run
-only on your Mac; there are no GitHub Actions builds. Use `scripts/release.sh`
+Run `make ci` locally before opening a pull request. GitHub Actions also builds
+and verifies the app bundle. Use `scripts/release.sh` on your Mac
 to prepare release artifacts, or add `--publish` to create a draft GitHub Release.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [release guide](docs/releasing.md).
 
